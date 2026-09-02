@@ -67,9 +67,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     if (file) handleFileSelected(file);
   };
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     if (!parsedData || parsedData.validWorkers.length === 0) return;
-    const res = importWorkers(parsedData.validWorkers);
+    const res = await importWorkers(parsedData.validWorkers);
     if (res.success) {
       onSuccessToast(res.message);
       onClose();

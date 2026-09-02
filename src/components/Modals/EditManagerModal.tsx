@@ -24,10 +24,10 @@ export const EditManagerModal: React.FC<EditManagerModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    updateManager({ name: name.trim(), phone: phone.trim() });
+    await updateManager({ name: name.trim(), phone: phone.trim() });
     onSuccessToast('Đã cập nhật thông tin Quản lý Ký túc xá thành công!');
     onClose();
   };

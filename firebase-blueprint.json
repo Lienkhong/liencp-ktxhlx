@@ -1,0 +1,140 @@
+{
+  "entities": {
+    "Worker": {
+      "title": "Worker",
+      "description": "Hồ sơ công nhân lưu trú tại ký túc xá",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "dob": { "type": "string" },
+        "dorm": { "type": "number" },
+        "room": { "type": "number" },
+        "bed": { "type": "number" },
+        "teamLeader": { "type": "string" },
+        "status": { "type": "string", "enum": ["Đang ở", "Đã rời KTX"] },
+        "empCode": { "type": "string" },
+        "cccd": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "workplace": { "type": "string" },
+        "note": { "type": "string" },
+        "entryDate": { "type": "string" },
+        "exitDate": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "gender": { "type": "string" },
+        "hometown": { "type": "string" },
+        "issueDate": { "type": "string" },
+        "issuePlace": { "type": "string" },
+        "cccdDocument": { "type": "object" },
+        "cccdFrontImage": { "type": "string" },
+        "cccdBackImage": { "type": "string" }
+      },
+      "required": ["id"]
+    },
+    "WorkerDocument": {
+      "title": "WorkerDocument",
+      "description": "Kho lưu trữ tài liệu ảnh CCCD bảo mật theo Worker ID nội bộ",
+      "type": "object",
+      "properties": {
+        "workerId": { "type": "string" },
+        "frontImage": { "type": "string" },
+        "backImage": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "uploadedAt": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["workerId"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Tài khoản người dùng và phân quyền (Admin / Quản lý / Viewer)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manager", "viewer"] },
+        "password": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "phone": { "type": "string" }
+      },
+      "required": ["id", "email", "name", "role"]
+    },
+    "SystemConfig": {
+      "title": "SystemConfig",
+      "description": "Cấu hình quy mô KTX (số dãy, số phòng, số giường)",
+      "type": "object",
+      "properties": {
+        "numDorms": { "type": "number" },
+        "roomsPerDorm": { "type": "number" },
+        "maxBedsPerRoom": { "type": "number" },
+        "enforceBedControl": { "type": "boolean" },
+        "enableBedManagement": { "type": "boolean" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["numDorms", "roomsPerDorm", "maxBedsPerRoom", "enableBedManagement"]
+    },
+    "ManagerInfo": {
+      "title": "ManagerInfo",
+      "description": "Thông tin liên hệ quản lý KTX",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "notes": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Lịch sử thao tác hệ thống theo thời gian thực",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "targetId": { "type": "string" },
+        "empCode": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "userName", "action", "details"]
+    }
+  },
+  "firestore": {
+    "/workers/{workerId}": {
+      "schema": "Worker",
+      "description": "Danh sách tất cả công nhân lưu trú trong ký túc xá"
+    },
+    "/worker_documents/{workerId}": {
+      "schema": "WorkerDocument",
+      "description": "Kho lưu trữ tài liệu ảnh CCCD nhạy cảm được bảo mật riêng biệt"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Danh sách tài khoản người dùng và phân quyền"
+    },
+    "/system_config/{configId}": {
+      "schema": "SystemConfig",
+      "description": "Cấu hình quy mô ký túc xá"
+    },
+    "/manager_info/{infoId}": {
+      "schema": "ManagerInfo",
+      "description": "Thông tin ban quản lý ký túc xá"
+    },
+    "/activity_logs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Nhật ký kiểm tra và lịch sử hoạt động hệ thống"
+    }
+  }
+}

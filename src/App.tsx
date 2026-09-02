@@ -6,6 +6,7 @@ import { DashboardCards } from './components/DashboardCards';
 import { DormGrid } from './components/DormGrid';
 import { RoomGrid } from './components/RoomGrid';
 import { WorkersTable } from './components/WorkersTable';
+import { MobileDormView } from './components/MobileDormView';
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast';
 
 // Modals
@@ -26,6 +27,7 @@ import { AuditLogsModal } from './components/Modals/AuditLogsModal';
 import { EditManagerModal } from './components/Modals/EditManagerModal';
 import { ConfirmDeleteModal } from './components/Modals/ConfirmDeleteModal';
 import { LoginModal } from './components/Modals/LoginModal';
+import { ManagerLinksModal } from './components/Modals/ManagerLinksModal';
 
 import { Worker } from './types';
 import {
@@ -44,6 +46,27 @@ import {
 
 const DormApp: React.FC = () => {
   const { currentUser } = useDorm();
+
+  // View Mode: 'desktop' vs 'mobile'
+  const [viewMode, setViewMode] = useState<'desktop' | 'mobile'>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlView = params.get('view')?.toLowerCase();
+      if (urlView === 'mobile' || urlView === 'phone') return 'mobile';
+      if (urlView === 'desktop' || urlView === 'pc') return 'desktop';
+      const saved = localStorage.getItem('dorm_view_mode');
+      if (saved === 'mobile' || saved === 'desktop') return saved;
+      if (window.innerWidth < 768) return 'mobile';
+    }
+    return 'desktop';
+  });
+
+  const handleToggleViewMode = (mode: 'desktop' | 'mobile') => {
+    setViewMode(mode);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('dorm_view_mode', mode);
+    }
+  };
 
   // Navigation State
   const [selectedDorm, setSelectedDorm] = useState<number | null>(null);
@@ -91,6 +114,41 @@ const DormApp: React.FC = () => {
   const [isAuditLogsOpen, setIsAuditLogsOpen] = useState(false);
   const [isEditManagerOpen, setIsEditManagerOpen] = useState(false);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [isManagerLinksOpen, setIsManagerLinksOpen] = useState(false);
+
+  // Deep linking and quick action handling on load
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const action = params.get('action')?.toLowerCase();
+      if (action === 'scan' || action === 'cccd') {
+        setIsCccdScanOpen(true);
+      } else if (action === 'leaders' || action === 'totruong') {
+        setIsTeamLeadersOpen(true);
+      } else if (action === 'active-rooms' || action === 'phong') {
+        setIsActiveRoomsOpen(true);
+      } else if (action === 'search' || action === 'timkiem') {
+        setIsSearchOpen(true);
+      } else if (action === 'manager-links' || action === 'links' || action === 'portal') {
+        setIsManagerLinksOpen(true);
+      }
+
+      const dormParam = params.get('dorm');
+      const roomParam = params.get('room');
+      if (dormParam) {
+        const d = parseInt(dormParam, 10);
+        if (!isNaN(d)) {
+          setSelectedDorm(d);
+          if (roomParam) {
+            const r = parseInt(roomParam, 10);
+            if (!isNaN(r)) {
+              setSelectedRoom(r);
+            }
+          }
+        }
+      }
+    }
+  }, []);
 
   // Navigation handlers
   const handleSelectRoot = () => {
@@ -160,165 +218,205 @@ const DormApp: React.FC = () => {
       {/* Toast Notification Layer */}
       <ToastContainer toasts={toasts} removeToast={removeToast} />
 
-      {/* Main Top Header */}
-      <Header
-        onOpenEditManager={() => setIsEditManagerOpen(true)}
-        onOpenDuplicateChecker={() => setIsDuplicateCheckerOpen(true)}
-        onOpenCccdScan={() => setIsCccdScanOpen(true)}
-        onOpenAddWorker={() => {
-          setWorkerToEdit(null);
-          setIsAddWorkerOpen(true);
-        }}
-        onOpenSettings={() => {
-          setSettingsTab('scale');
-          setIsSettingsOpen(true);
-        }}
-        onOpenImportModal={() => setIsExcelImportOpen(true)}
-        onOpenExportModal={() => setIsExcelExportOpen(true)}
-        onOpenBackupModal={() => {
-          setSettingsTab('backup');
-          setIsSettingsOpen(true);
-        }}
-        onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
-        onOpenUserManagement={() => setIsUserManagementOpen(true)}
-        onOpenLogin={() => setIsLoginOpen(true)}
-      />
-
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        
-        {/* Top Metric Cards */}
-        <DashboardCards
-          onFilterActive={handleFilterActive}
-          onFilterTodayEntered={handleFilterTodayEntered}
-          onFilterTodayExited={handleFilterTodayExited}
-          onOpenTeamLeaders={() => setIsTeamLeadersOpen(true)}
-          onOpenActiveRooms={() => setIsActiveRoomsOpen(true)}
+      {/* View Switch: Mobile vs Desktop */}
+      {viewMode === 'mobile' ? (
+        <MobileDormView
+          onOpenEditManager={() => setIsEditManagerOpen(true)}
+          onOpenDuplicateChecker={() => setIsDuplicateCheckerOpen(true)}
+          onOpenCccdScan={() => setIsCccdScanOpen(true)}
+          onOpenAddWorker={() => {
+            setWorkerToEdit(null);
+            setIsAddWorkerOpen(true);
+          }}
+          onOpenSettings={() => {
+            setSettingsTab('scale');
+            setIsSettingsOpen(true);
+          }}
+          onOpenSearchModal={() => setIsSearchOpen(true)}
+          onOpenCccdGallery={() => setIsCccdGalleryOpen(true)}
+          onOpenDeleteByEmpCodeModal={() => setIsDeleteByEmpCodeOpen(true)}
+          onOpenTeamLeadersModal={() => setIsTeamLeadersOpen(true)}
+          onOpenActiveRoomsModal={() => setIsActiveRoomsOpen(true)}
+          onEditWorker={(worker) => {
+            setWorkerToEdit(worker);
+            setIsAddWorkerOpen(true);
+          }}
+          onDeleteWorker={(worker) => {
+            setWorkerToDelete(worker);
+          }}
+          onViewCccd={(worker) => {
+            setWorkerToViewCccd(worker);
+            setIsCccdGalleryOpen(true);
+          }}
+          onSwitchToDesktop={() => handleToggleViewMode('desktop')}
+          selectedDormFilter={selectedDorm}
+          onSelectDormFilter={(dorm) => setSelectedDorm(dorm)}
         />
-
-        {/* Breadcrumb Navigation */}
-        <Breadcrumb
-          selectedDorm={selectedDorm}
-          selectedRoom={selectedRoom}
-          onSelectRoot={handleSelectRoot}
-          onSelectDorm={handleSelectDorm}
-        />
-
-        {/* View Switching: Dorms List OR Room Details in Selected Dorm */}
-        {selectedDorm === null ? (
-          <DormGrid onSelectDorm={handleSelectDorm} />
-        ) : selectedRoom === null ? (
-          <RoomGrid
-            dormNumber={selectedDorm}
-            onSelectRoom={handleSelectRoom}
-            onBackToDorms={handleSelectRoot}
-            onAddWorkerToRoom={(dorm, room) => {
-              setWorkerToEdit(null);
-              setSelectedDorm(dorm);
-              setSelectedRoom(room);
-              setIsAddWorkerOpen(true);
-            }}
-          />
-        ) : null}
-
-        {/* Workers Main Table */}
-        <div className="pt-2">
-          <WorkersTable
-            key={`${selectedDorm}-${selectedRoom}-${tableStatusFilter}-${tableEnteredToday}-${tableExitedToday}`}
-            selectedDormFilter={selectedDorm}
-            selectedRoomFilter={selectedRoom}
-            onClearRoomFilter={() => setSelectedRoom(null)}
-            initialStatusFilter={tableStatusFilter}
-            initialEnteredToday={tableEnteredToday}
-            initialExitedToday={tableExitedToday}
-            onEditWorker={(worker) => {
-              setWorkerToEdit(worker);
-              setIsAddWorkerOpen(true);
-            }}
-            onDeleteWorker={(worker) => {
-              setWorkerToDelete(worker);
-            }}
-            onViewCccd={(worker) => {
-              setWorkerToViewCccd(worker);
-              setIsCccdGalleryOpen(true);
-            }}
+      ) : (
+        <>
+          {/* Main Top Header */}
+          <Header
+            onOpenEditManager={() => setIsEditManagerOpen(true)}
+            onOpenDuplicateChecker={() => setIsDuplicateCheckerOpen(true)}
+            onOpenCccdScan={() => setIsCccdScanOpen(true)}
             onOpenAddWorker={() => {
               setWorkerToEdit(null);
               setIsAddWorkerOpen(true);
             }}
-            onOpenSearchModal={() => setIsSearchOpen(true)}
-            onOpenDeleteByEmpCodeModal={() => setIsDeleteByEmpCodeOpen(true)}
-            onOpenExportModal={() => setIsExcelExportOpen(true)}
+            onOpenSettings={() => {
+              setSettingsTab('scale');
+              setIsSettingsOpen(true);
+            }}
             onOpenImportModal={() => setIsExcelImportOpen(true)}
+            onOpenExportModal={() => setIsExcelExportOpen(true)}
+            onOpenBackupModal={() => {
+              setSettingsTab('backup');
+              setIsSettingsOpen(true);
+            }}
+            onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
+            onOpenUserManagement={() => setIsUserManagementOpen(true)}
+            onOpenLogin={() => setIsLoginOpen(true)}
+            onOpenManagerLinks={() => setIsManagerLinksOpen(true)}
+            onSwitchToMobile={() => handleToggleViewMode('mobile')}
           />
-        </div>
 
-        {/* System Administration Shortcuts Banner */}
-        <div className="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300">
-            <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <span>Tiện ích hệ thống nâng cao:</span>
-          </div>
+          {/* Main Content Area */}
+          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+            
+            {/* Top Metric Cards */}
+            <DashboardCards
+              onFilterActive={handleFilterActive}
+              onFilterTodayEntered={handleFilterTodayEntered}
+              onFilterTodayExited={handleFilterTodayExited}
+              onOpenTeamLeaders={() => setIsTeamLeadersOpen(true)}
+              onOpenActiveRooms={() => setIsActiveRoomsOpen(true)}
+            />
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsTeamLeadersOpen(true)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-violet-50 dark:bg-violet-950/60 hover:bg-violet-100 dark:hover:bg-violet-900/60 text-violet-700 dark:text-violet-300 transition-colors border border-violet-200 dark:border-violet-800 font-medium"
-            >
-              <UserCheck className="w-3.5 h-3.5 text-violet-600" />
-              <span>Danh sách tổ trưởng</span>
-            </button>
+            {/* Breadcrumb Navigation */}
+            <Breadcrumb
+              selectedDorm={selectedDorm}
+              selectedRoom={selectedRoom}
+              onSelectRoot={handleSelectRoot}
+              onSelectDorm={handleSelectDorm}
+            />
 
-            <button
-              type="button"
-              onClick={() => setIsCccdGalleryOpen(true)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
-            >
-              <Camera className="w-3.5 h-3.5 text-blue-500" />
-              <span>Kho ảnh CCCD</span>
-            </button>
+            {/* View Switching: Dorms List OR Room Details in Selected Dorm */}
+            {selectedDorm === null ? (
+              <DormGrid onSelectDorm={handleSelectDorm} />
+            ) : selectedRoom === null ? (
+              <RoomGrid
+                dormNumber={selectedDorm}
+                onSelectRoom={handleSelectRoom}
+                onBackToDorms={handleSelectRoot}
+                onAddWorkerToRoom={(dorm, room) => {
+                  setWorkerToEdit(null);
+                  setSelectedDorm(dorm);
+                  setSelectedRoom(room);
+                  setIsAddWorkerOpen(true);
+                }}
+              />
+            ) : null}
 
-            <button
-              type="button"
-              onClick={() => {
-                setSettingsTab('backup');
-                setIsSettingsOpen(true);
-              }}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
-            >
-              <HardDrive className="w-3.5 h-3.5 text-emerald-500" />
-              <span>Sao lưu / Phục hồi JSON</span>
-            </button>
+            {/* Workers Main Table */}
+            <div className="pt-2">
+              <WorkersTable
+                key={`${selectedDorm}-${selectedRoom}-${tableStatusFilter}-${tableEnteredToday}-${tableExitedToday}`}
+                selectedDormFilter={selectedDorm}
+                selectedRoomFilter={selectedRoom}
+                onClearRoomFilter={() => setSelectedRoom(null)}
+                initialStatusFilter={tableStatusFilter}
+                initialEnteredToday={tableEnteredToday}
+                initialExitedToday={tableExitedToday}
+                onEditWorker={(worker) => {
+                  setWorkerToEdit(worker);
+                  setIsAddWorkerOpen(true);
+                }}
+                onDeleteWorker={(worker) => {
+                  setWorkerToDelete(worker);
+                }}
+                onViewCccd={(worker) => {
+                  setWorkerToViewCccd(worker);
+                  setIsCccdGalleryOpen(true);
+                }}
+                onOpenAddWorker={() => {
+                  setWorkerToEdit(null);
+                  setIsAddWorkerOpen(true);
+                }}
+                onOpenSearchModal={() => setIsSearchOpen(true)}
+                onOpenDeleteByEmpCodeModal={() => setIsDeleteByEmpCodeOpen(true)}
+                onOpenExportModal={() => setIsExcelExportOpen(true)}
+                onOpenImportModal={() => setIsExcelImportOpen(true)}
+              />
+            </div>
 
-            <button
-              type="button"
-              onClick={() => setIsAuditLogsOpen(true)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
-            >
-              <History className="w-3.5 h-3.5 text-amber-500" />
-              <span>Nhật ký thao tác</span>
-            </button>
+            {/* System Administration Shortcuts Banner */}
+            <div className="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300">
+                <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span>Tiện ích hệ thống nâng cao:</span>
+              </div>
 
-            {currentUser?.role === 'admin' && (
-              <button
-                type="button"
-                onClick={() => setIsUserManagementOpen(true)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 transition-colors border border-rose-200 dark:border-rose-800 font-semibold"
-              >
-                <Shield className="w-3.5 h-3.5 text-rose-600" />
-                <span>Phân quyền tài khoản</span>
-              </button>
-            )}
-          </div>
-        </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsTeamLeadersOpen(true)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-violet-50 dark:bg-violet-950/60 hover:bg-violet-100 dark:hover:bg-violet-900/60 text-violet-700 dark:text-violet-300 transition-colors border border-violet-200 dark:border-violet-800 font-medium"
+                >
+                  <UserCheck className="w-3.5 h-3.5 text-violet-600" />
+                  <span>Danh sách tổ trưởng</span>
+                </button>
 
-      </main>
+                <button
+                  type="button"
+                  onClick={() => setIsCccdGalleryOpen(true)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+                >
+                  <Camera className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Kho ảnh CCCD</span>
+                </button>
 
-      {/* Footer */}
-      <footer className="mt-auto border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xs py-4 text-center text-xs text-slate-500 dark:text-slate-400">
-        <p>Hệ thống Quản lý Ký túc xá Công nhân • Phiên bản Web Enterprise • Hỗ trợ OCR CCCD & Xuất Excel 2 Sheet</p>
-      </footer>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettingsTab('backup');
+                    setIsSettingsOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+                >
+                  <HardDrive className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Sao lưu / Phục hồi JSON</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsAuditLogsOpen(true)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+                >
+                  <History className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Nhật ký thao tác</span>
+                </button>
+
+                {currentUser?.role === 'admin' && (
+                  <button
+                    type="button"
+                    onClick={() => setIsUserManagementOpen(true)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 transition-colors border border-rose-200 dark:border-rose-800 font-semibold"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Phân quyền tài khoản</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+          </main>
+
+          {/* Footer */}
+          <footer className="mt-auto border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xs py-4 text-center text-xs text-slate-500 dark:text-slate-400">
+            <p>Hệ thống Quản lý Ký túc xá Công nhân • Phiên bản Web Enterprise • Hỗ trợ OCR CCCD & Xuất Excel 2 Sheet</p>
+          </footer>
+        </>
+      )}
 
       {/* All Modal Overlays */}
       <AddEditWorkerModal
@@ -457,6 +555,12 @@ const DormApp: React.FC = () => {
         onClose={() => setIsLoginOpen(false)}
         onSuccessToast={(msg) => addToast('success', msg)}
         onErrorToast={(msg) => addToast('error', msg)}
+      />
+
+      <ManagerLinksModal
+        isOpen={isManagerLinksOpen}
+        onClose={() => setIsManagerLinksOpen(false)}
+        onSuccessToast={(msg) => addToast('success', msg)}
       />
 
     </div>

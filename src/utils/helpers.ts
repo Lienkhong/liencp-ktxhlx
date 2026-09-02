@@ -41,6 +41,19 @@ export function formatDateTimeDisplay(isoStr?: string): string {
 }
 
 /**
+ * Mask CCCD number for privacy & security: e.g. 0010******123
+ */
+export function maskCccdNumber(raw?: string): string {
+  if (!raw) return '-';
+  const clean = raw.trim();
+  if (clean.length < 8) return clean;
+  const start = clean.slice(0, 4);
+  const end = clean.slice(-3);
+  const stars = '*'.repeat(Math.max(4, clean.length - 7));
+  return `${start}${stars}${end}`;
+}
+
+/**
  * OCR Post-processing normalization
  * Replaces O/o -> 0, I/l/L -> 1, strips spaces, truncates to 12 digits
  */

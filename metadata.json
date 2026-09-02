@@ -1,6 +1,10 @@
 {
   "name": "QUẢN LÝ KÝ TÚC XÁ CÔNG NHÂN",
   "description": "Hệ thống Quản lý Ký túc xá Công nhân toàn diện với phân quyền Admin/Quản lý, quản lý dãy phòng giường, OCR CCCD thông minh, import/export Excel và sao lưu khôi phục JSON.",
-  "requestFramePermissions": ["camera"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

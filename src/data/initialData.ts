@@ -10,10 +10,10 @@ export const INITIAL_CONFIG: DormConfig = {
 };
 
 export const INITIAL_MANAGER: ManagerInfo = {
-  name: 'Lê Văn Quyết',
-  phone: '0988 123 456',
-  email: 'quanlyktx@company.vn',
-  notes: 'Phụ trách Quản lý ký túc xá công nhân Khu công nghiệp',
+  name: 'Khổng Minh Liên',
+  phone: '0912 345 678',
+  email: 'Liencp85@gmail.com',
+  notes: 'Hệ thống Quản lý Ký túc xá Công nhân - Quản trị viên Khổng Minh Liên',
 };
 
 export const INITIAL_USERS: User[] = [

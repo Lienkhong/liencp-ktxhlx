@@ -22,8 +22,8 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
 
   if (!isOpen || !worker) return null;
 
-  const handleConfirm = () => {
-    const res = deleteWorker(worker.id);
+  const handleConfirm = async () => {
+    const res = await deleteWorker(worker.id);
     if (res.success) {
       onSuccessToast(`Đã xóa thành công công nhân ${worker.name}`);
       onClose();

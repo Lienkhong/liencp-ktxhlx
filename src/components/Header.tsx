@@ -15,6 +15,8 @@ import {
   Database,
   History,
   Users,
+  Link2,
+  Smartphone,
 } from 'lucide-react';
 import { useDorm } from '../context/DormContext';
 
@@ -30,6 +32,8 @@ interface HeaderProps {
   onOpenAuditLogs: () => void;
   onOpenUserManagement: () => void;
   onOpenLogin: () => void;
+  onOpenManagerLinks: () => void;
+  onSwitchToMobile?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -44,6 +48,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAuditLogs,
   onOpenUserManagement,
   onOpenLogin,
+  onOpenManagerLinks,
+  onSwitchToMobile,
 }) => {
   const { manager, currentUser, theme, toggleTheme, logout } = useDorm();
 
@@ -76,8 +82,12 @@ export const Header: React.FC<HeaderProps> = ({
                   <UserCheck className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                   Quản lý: <strong className="text-slate-900 dark:text-white">{manager.name}</strong>
                 </span>
-                <span className="hidden sm:inline-block text-slate-300 dark:text-slate-700">•</span>
-                <span className="hidden sm:inline-block">Khu Công Nghiệp</span>
+                {currentUser?.role === 'admin' && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-200 dark:border-rose-800">
+                    <Shield className="w-2.5 h-2.5" />
+                    Admin
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -87,6 +97,17 @@ export const Header: React.FC<HeaderProps> = ({
             
             {/* Quick Actions (Desktop & Tablet) */}
             <div className="hidden lg:flex items-center gap-1.5 mr-1 border-r border-slate-200 dark:border-slate-800 pr-2">
+              <button
+                type="button"
+                id="btn-header-manager-links"
+                onClick={onOpenManagerLinks}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-md text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border border-emerald-200 dark:border-emerald-800 transition-colors"
+                title="Mở bảng đường dẫn truy cập dành cho các Quản lý"
+              >
+                <Link2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Đường dẫn QL</span>
+              </button>
+
               <button
                 type="button"
                 id="btn-header-edit-manager"
@@ -133,6 +154,20 @@ export const Header: React.FC<HeaderProps> = ({
                 <UserPlus className="w-4 h-4" />
                 <span className="hidden sm:inline">Thêm công nhân</span>
                 <span className="sm:hidden">Thêm</span>
+              </button>
+            )}
+
+            {/* Switch to Mobile View Button */}
+            {onSwitchToMobile && (
+              <button
+                type="button"
+                id="btn-header-mobile-view"
+                onClick={onSwitchToMobile}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-xs font-semibold transition-all shadow-2xs"
+                title="Chuyển sang giao diện tối ưu cho Điện thoại"
+              >
+                <Smartphone className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span className="hidden sm:inline">Bản ĐT</span>
               </button>
             )}
 

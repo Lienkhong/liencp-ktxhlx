@@ -135,44 +135,44 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               >
                 <div>
                   <div className="font-bold text-xs text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <span>👑 Admin Tối cao</span>
+                    <span>👑 Admin: Khổng Minh Liên</span>
                     <span className="text-[10px] bg-rose-100 text-rose-700 dark:bg-rose-950 px-1.5 py-0.2 rounded font-mono">
                       Liencp85@gmail.com
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-500">Mật khẩu: admin123 (Toàn quyền hệ thống)</div>
+                  <div className="text-[11px] text-slate-500">Mật khẩu: admin123 (Toàn quyền hệ thống & phân quyền)</div>
                 </div>
               </button>
 
               <button
                 type="button"
-                onClick={() => quickFill('quanly@ktx.com', 'manager123')}
+                onClick={() => quickFill('quanlyktx@company.vn', 'manager123')}
                 className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 text-left transition-colors flex items-center justify-between"
               >
                 <div>
                   <div className="font-bold text-xs text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <span>🏢 Quản lý KTX</span>
+                    <span>🏢 Quản lý KTX (Lê Văn Quyết)</span>
                     <span className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-950 px-1.5 py-0.2 rounded font-mono">
-                      quanly@ktx.com
+                      quanlyktx@company.vn
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-500">Mật khẩu: manager123 (Thêm, sửa, xóa, Excel)</div>
+                  <div className="text-[11px] text-slate-500">Mật khẩu: manager123 (Thêm, sửa, xếp phòng, duyệt ra/vào)</div>
                 </div>
               </button>
 
               <button
                 type="button"
-                onClick={() => quickFill('xem@ktx.com', 'user123')}
+                onClick={() => quickFill('nhanvienxem@company.vn', 'viewer123')}
                 className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 text-left transition-colors flex items-center justify-between"
               >
                 <div>
                   <div className="font-bold text-xs text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <span>👀 Nhân viên xem</span>
+                    <span>👀 Nhân viên xem & tra cứu</span>
                     <span className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-950 px-1.5 py-0.2 rounded font-mono">
-                      xem@ktx.com
+                      nhanvienxem@company.vn
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-500">Mật khẩu: user123 (Tìm kiếm & xem thông tin)</div>
+                  <div className="text-[11px] text-slate-500">Mật khẩu: viewer123 (Tìm kiếm & xem thông tin)</div>
                 </div>
               </button>
             </div>

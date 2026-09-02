@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
   Worker,
   User,
@@ -9,6 +9,7 @@ import {
   WorkerStatus,
   ImportPreviewRow,
   TeamLeaderSummary,
+  SyncStatus,
 } from '../types';
 import {
   INITIAL_CONFIG,
@@ -18,6 +19,24 @@ import {
   INITIAL_AUDIT_LOGS,
 } from '../data/initialData';
 import { generateId, getTodayStr } from '../utils/helpers';
+import {
+  db,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  writeBatch,
+  onSnapshot,
+  query,
+  limit,
+  testFirestoreConnection,
+  saveSecureWorkerDocument,
+  getSecureWorkerDocument,
+  deleteSecureWorkerDocument,
+} from '../lib/firebase';
 
 interface DormContextType {
   workers: Worker[];
@@ -29,43 +48,61 @@ interface DormContextType {
   theme: 'light' | 'dark';
   setTheme: (theme: 'light' | 'dark') => void;
   toggleTheme: () => void;
+
+  // Real-time Cloud Sync state
+  syncStatus: SyncStatus;
+  isOnline: boolean;
+  lastSyncTime: Date | null;
+  forceSyncNow: () => Promise<void>;
   
   // Auth
   login: (email: string, pass: string) => { success: boolean; message: string };
   logout: () => void;
   
-  // Worker Operations
+  // Worker Operations (Real-time Cloud Sync)
   addWorker: (
-    worker: Omit<Worker, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'>,
+    worker: Partial<Worker>,
     overwriteIfDuplicate?: boolean
-  ) => { success: boolean; message: string; duplicateWorker?: Worker };
+  ) => Promise<{ success: boolean; message: string; duplicateWorker?: Worker }>;
   updateWorker: (
     id: string,
     updates: Partial<Omit<Worker, 'id' | 'createdAt' | 'createdBy'>>
-  ) => { success: boolean; message: string };
-  deleteWorker: (id: string) => { success: boolean; message: string };
-  deleteWorkerByEmpCode: (empCode: string) => { success: boolean; message: string; deletedWorker?: Worker };
+  ) => Promise<{ success: boolean; message: string }>;
+  deleteWorker: (id: string) => Promise<{ success: boolean; message: string }>;
+  deleteWorkerByEmpCode: (empCode: string) => Promise<{ success: boolean; message: string; deletedWorker?: Worker }>;
   getWorkerById: (id: string) => Worker | undefined;
   getWorkerByEmpCode: (empCode: string) => Worker | undefined;
 
+  // Secure CCCD Photo & Document Operations
+  canViewCccd: (worker?: Worker) => boolean;
+  fetchSecureCccdImages: (workerId: string) => Promise<{ frontImage?: string; backImage?: string } | null>;
+  deleteSecureCccdImages: (workerId: string) => Promise<{ success: boolean; message: string }>;
+  addAuditLog: (
+    action: AuditLog['action'],
+    details: string,
+    empCode?: string,
+    targetId?: string,
+    status?: 'SUCCESS' | 'FAILED' | 'DENIED'
+  ) => Promise<void>;
+
   // Management & Config
-  updateManagerInfo: (info: Partial<ManagerInfo>) => void;
-  updateConfig: (newConfig: DormConfig) => { success: boolean; message: string };
+  updateManagerInfo: (info: Partial<ManagerInfo>) => Promise<void>;
+  updateConfig: (newConfig: DormConfig) => Promise<{ success: boolean; message: string }>;
   
   // Import & Export & Backup
-  importWorkers: (rows: ImportPreviewRow[], overwriteDuplicates?: boolean) => { success: boolean; importedCount: number; updatedCount: number };
+  importWorkers: (rows: ImportPreviewRow[], overwriteDuplicates?: boolean) => Promise<{ success: boolean; importedCount: number; updatedCount: number }>;
   backupData: () => any;
-  restoreData: (jsonData: any, overwrite?: boolean) => { success: boolean; message: string };
-  mergeJsonData: (jsonList: any[], conflictStrategy: 'keep_existing' | 'overwrite') => { success: boolean; addedCount: number; updatedCount: number };
+  restoreData: (jsonData: any, overwrite?: boolean) => Promise<{ success: boolean; message: string }>;
+  mergeJsonData: (jsonList: any[], conflictStrategy: 'keep_existing' | 'overwrite') => Promise<{ success: boolean; addedCount: number; updatedCount: number }>;
   
   // User Management (Admin only)
-  addUser: (user: Omit<User, 'id' | 'createdAt'>) => { success: boolean; message: string };
-  updateUser: (id: string, updates: Partial<User>) => { success: boolean; message: string };
-  deleteUser: (id: string) => { success: boolean; message: string };
+  addUser: (user: Omit<User, 'id' | 'createdAt'>) => Promise<{ success: boolean; message: string }>;
+  updateUser: (id: string, updates: Partial<User>) => Promise<{ success: boolean; message: string }>;
+  deleteUser: (id: string) => Promise<{ success: boolean; message: string }>;
 
   // Reset / Demo
-  resetToDemoData: () => void;
-  clearAllWorkers: () => void;
+  resetToDemoData: () => Promise<void>;
+  clearAllWorkers: () => Promise<void>;
   
   // Auto-Save on Exit & Backup
   autoSaveJsonOnExit: boolean;
@@ -81,22 +118,22 @@ interface DormContextType {
   getTodayExitsCount: () => number;
   getTeamLeadersSummary: () => TeamLeaderSummary[];
   getTeamLeadersCount: () => number;
-  updateTeamLeaderPhone: (leaderName: string, phone: string) => void;
+  updateTeamLeaderPhone: (leaderName: string, phone: string) => Promise<void>;
 }
 
 const DormContext = createContext<DormContextType | null>(null);
 
 const STORAGE_KEYS = {
-  WORKERS: 'qktx_workers_v1',
-  CONFIG: 'qktx_config_v1',
-  MANAGER: 'qktx_manager_v1',
-  USERS: 'qktx_users_v1',
-  CURRENT_USER: 'qktx_current_user_v1',
-  AUDIT_LOGS: 'qktx_audit_logs_v1',
-  THEME: 'qktx_theme_v1',
-  AUTO_SAVE_EXIT: 'qktx_auto_save_json_on_exit_v1',
-  EXIT_SNAPSHOT: 'qktx_exit_backup_snapshot_v1',
-  LEADER_PHONES: 'qktx_leader_phones_v1',
+  WORKERS_CACHE: 'qktx_workers_cache_v2',
+  CONFIG_CACHE: 'qktx_config_cache_v2',
+  MANAGER_CACHE: 'qktx_manager_cache_v2',
+  USERS_CACHE: 'qktx_users_cache_v2',
+  CURRENT_USER: 'qktx_current_user_v2',
+  AUDIT_LOGS_CACHE: 'qktx_audit_logs_cache_v2',
+  THEME: 'qktx_theme_v2',
+  AUTO_SAVE_EXIT: 'qktx_auto_save_json_on_exit_v2',
+  EXIT_SNAPSHOT: 'qktx_exit_backup_snapshot_v2',
+  LEADER_PHONES: 'qktx_leader_phones_v2',
 };
 
 const DEFAULT_LEADER_PHONES: Record<string, string> = {
@@ -109,10 +146,16 @@ const DEFAULT_LEADER_PHONES: Record<string, string> = {
 };
 
 export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Workers State
+  // Sync Status State
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('syncing');
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const isInitialSeededRef = useRef(false);
+
+  // Workers State (Local cache initialized, then populated from Firestore live stream)
   const [workers, setWorkers] = useState<Worker[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.WORKERS);
+      const saved = localStorage.getItem(STORAGE_KEYS.WORKERS_CACHE);
       return saved ? JSON.parse(saved) : INITIAL_WORKERS;
     } catch {
       return INITIAL_WORKERS;
@@ -122,7 +165,7 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Config State
   const [config, setConfig] = useState<DormConfig>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.CONFIG);
+      const saved = localStorage.getItem(STORAGE_KEYS.CONFIG_CACHE);
       return saved ? JSON.parse(saved) : INITIAL_CONFIG;
     } catch {
       return INITIAL_CONFIG;
@@ -132,8 +175,13 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Manager Info
   const [manager, setManager] = useState<ManagerInfo>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.MANAGER);
-      return saved ? JSON.parse(saved) : INITIAL_MANAGER;
+      const saved = localStorage.getItem(STORAGE_KEYS.MANAGER_CACHE);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.name === 'Lê Văn Quyết') return INITIAL_MANAGER;
+        return parsed;
+      }
+      return INITIAL_MANAGER;
     } catch {
       return INITIAL_MANAGER;
     }
@@ -142,10 +190,9 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Users State
   const [users, setUsers] = useState<User[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.USERS);
+      const saved = localStorage.getItem(STORAGE_KEYS.USERS_CACHE);
       if (saved) {
         const parsed: User[] = JSON.parse(saved);
-        // Automatically sync super admin name if needed
         return parsed.map((u) => {
           if (u.email?.toLowerCase() === 'liencp85@gmail.com') {
             return { ...u, name: 'Khổng Minh Liên (Admin)' };
@@ -159,9 +206,25 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  // Current User (default to Admin for instant seamless exploration or stored session)
+  // Current User (Session / URL link)
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     try {
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const portal = (params.get('portal') || params.get('role') || params.get('login'))?.toLowerCase();
+        if (portal === 'manager' || portal === 'quanly') {
+          const mgr = INITIAL_USERS.find((u) => u.role === 'manager') || INITIAL_USERS[1];
+          return mgr;
+        }
+        if (portal === 'viewer' || portal === 'xem') {
+          const v = INITIAL_USERS.find((u) => u.role === 'viewer') || INITIAL_USERS[2];
+          return v;
+        }
+        if (portal === 'admin') {
+          return INITIAL_USERS[0];
+        }
+      }
+
       const saved = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
       if (saved) {
         const parsed: User = JSON.parse(saved);
@@ -170,7 +233,6 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return parsed;
       }
-      // Auto login as Admin on first load
       return INITIAL_USERS[0];
     } catch {
       return INITIAL_USERS[0];
@@ -180,7 +242,7 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Audit Logs State
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
+      const saved = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS_CACHE);
       return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
     } catch {
       return INITIAL_AUDIT_LOGS;
@@ -191,13 +253,13 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.THEME);
-      return (saved === 'dark' || saved === 'light') ? saved : 'light';
+      return saved === 'dark' || saved === 'light' ? saved : 'light';
     } catch {
       return 'light';
     }
   });
 
-  // Auto-Save JSON on Exit preference (defaults to true)
+  // Auto-Save JSON on Exit preference
   const [autoSaveJsonOnExit, setAutoSaveJsonOnExitState] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.AUTO_SAVE_EXIT);
@@ -207,7 +269,7 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  // Custom Team Leader Phones storage
+  // Custom Leader Phones
   const [leaderPhones, setLeaderPhones] = useState<Record<string, string>>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.LEADER_PHONES);
@@ -216,6 +278,366 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return DEFAULT_LEADER_PHONES;
     }
   });
+
+  // Online / Offline Detection
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setSyncStatus('syncing');
+      testFirestoreConnection().then(() => {
+        setSyncStatus('synced');
+        setLastSyncTime(new Date());
+      });
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setSyncStatus('offline');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Update theme class
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.THEME, theme);
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
+  // Persist Current User session
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    }
+  }, [currentUser]);
+
+  // ----------------------------------------------------
+  // REAL-TIME FIRESTORE SYNCHRONIZATION & AUTO-SEED
+  // ----------------------------------------------------
+  useEffect(() => {
+    let isSubscribed = true;
+    setSyncStatus('syncing');
+
+    // 1. Listen to Workers Collection
+    const unsubscribeWorkers = onSnapshot(
+      collection(db, 'workers'),
+      (snapshot) => {
+        if (!isSubscribed) return;
+        if (snapshot.empty && !isInitialSeededRef.current) {
+          // If Firestore is completely empty on first boot, trigger seed
+          seedInitialFirestoreData();
+          return;
+        }
+
+        const cloudWorkers: Worker[] = [];
+        snapshot.forEach((docSnap) => {
+          cloudWorkers.push(docSnap.data() as Worker);
+        });
+
+        if (cloudWorkers.length > 0) {
+          // Sort by dorm, room, bed or createdAt
+          cloudWorkers.sort((a, b) => {
+            if (a.dorm !== b.dorm) return a.dorm - b.dorm;
+            if (a.room !== b.room) return a.room - b.room;
+            return (a.bed || 0) - (b.bed || 0);
+          });
+          setWorkers(cloudWorkers);
+          localStorage.setItem(STORAGE_KEYS.WORKERS_CACHE, JSON.stringify(cloudWorkers));
+        }
+
+        setSyncStatus('synced');
+        setLastSyncTime(new Date());
+      },
+      (error) => {
+        console.warn('Firestore workers sync error:', error);
+        if (!navigator.onLine) {
+          setSyncStatus('offline');
+        } else {
+          setSyncStatus('error');
+        }
+      }
+    );
+
+    // 2. Listen to System Config Doc
+    const unsubscribeConfig = onSnapshot(
+      doc(db, 'system_config', 'main'),
+      (docSnap) => {
+        if (!isSubscribed) return;
+        if (docSnap.exists()) {
+          const cloudConfig = docSnap.data() as DormConfig;
+          setConfig(cloudConfig);
+          localStorage.setItem(STORAGE_KEYS.CONFIG_CACHE, JSON.stringify(cloudConfig));
+        }
+      },
+      (error) => console.warn('Config sync error:', error)
+    );
+
+    // 3. Listen to Manager Info Doc
+    const unsubscribeManager = onSnapshot(
+      doc(db, 'manager_info', 'current'),
+      (docSnap) => {
+        if (!isSubscribed) return;
+        if (docSnap.exists()) {
+          const cloudManager = docSnap.data() as ManagerInfo;
+          setManager(cloudManager);
+          localStorage.setItem(STORAGE_KEYS.MANAGER_CACHE, JSON.stringify(cloudManager));
+        }
+      },
+      (error) => console.warn('Manager sync error:', error)
+    );
+
+    // 4. Listen to Users Collection
+    const unsubscribeUsers = onSnapshot(
+      collection(db, 'users'),
+      (snapshot) => {
+        if (!isSubscribed) return;
+        if (!snapshot.empty) {
+          const cloudUsers: User[] = [];
+          snapshot.forEach((d) => cloudUsers.push(d.data() as User));
+          setUsers(cloudUsers);
+          localStorage.setItem(STORAGE_KEYS.USERS_CACHE, JSON.stringify(cloudUsers));
+        }
+      },
+      (error) => console.warn('Users sync error:', error)
+    );
+
+    // 5. Listen to Activity Logs Collection
+    const unsubscribeLogs = onSnapshot(
+      query(collection(db, 'activity_logs'), limit(150)),
+      (snapshot) => {
+        if (!isSubscribed) return;
+        if (!snapshot.empty) {
+          const cloudLogs: AuditLog[] = [];
+          snapshot.forEach((d) => cloudLogs.push(d.data() as AuditLog));
+          cloudLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          setAuditLogs(cloudLogs);
+          localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS_CACHE, JSON.stringify(cloudLogs));
+        }
+      },
+      (error) => console.warn('Logs sync error:', error)
+    );
+
+    return () => {
+      isSubscribed = false;
+      unsubscribeWorkers();
+      unsubscribeConfig();
+      unsubscribeManager();
+      unsubscribeUsers();
+      unsubscribeLogs();
+    };
+  }, []);
+
+  // Helper to Seed initial dataset to Cloud Firestore if brand new database
+  const seedInitialFirestoreData = async () => {
+    if (isInitialSeededRef.current) return;
+    isInitialSeededRef.current = true;
+    try {
+      setSyncStatus('saving');
+      console.log('Seeding initial dataset to Firestore Cloud Database...');
+
+      // 1. Seed Config
+      await setDoc(doc(db, 'system_config', 'main'), INITIAL_CONFIG);
+
+      // 2. Seed Manager
+      await setDoc(doc(db, 'manager_info', 'current'), INITIAL_MANAGER);
+
+      // 3. Seed Users
+      const userBatch = writeBatch(db);
+      INITIAL_USERS.forEach((u) => {
+        userBatch.set(doc(db, 'users', u.id), u);
+      });
+      await userBatch.commit();
+
+      // 4. Seed Workers in batch
+      const workerBatch = writeBatch(db);
+      INITIAL_WORKERS.forEach((w) => {
+        workerBatch.set(doc(db, 'workers', w.id), w);
+      });
+      await workerBatch.commit();
+
+      // 5. Seed initial logs
+      const logBatch = writeBatch(db);
+      INITIAL_AUDIT_LOGS.forEach((log) => {
+        logBatch.set(doc(db, 'activity_logs', log.id), log);
+      });
+      await logBatch.commit();
+
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      console.log('Seeding initial dataset to Firestore completed successfully!');
+    } catch (e) {
+      console.error('Error seeding initial data to Firestore:', e);
+      setSyncStatus('error');
+    }
+  };
+
+  // Add Real-time Audit Log helper to Cloud Firestore
+  const addAuditLog = useCallback(
+    async (
+      action: AuditLog['action'],
+      details: string,
+      empCode?: string,
+      targetId?: string,
+      status: 'SUCCESS' | 'FAILED' | 'DENIED' = 'SUCCESS'
+    ) => {
+      const newLog: AuditLog = {
+        id: generateId('log'),
+        timestamp: new Date().toISOString(),
+        userName: currentUser?.name || manager.name || 'Quản lý',
+        userEmail: currentUser?.email || 'manager@qktx.cloud',
+        role: currentUser?.role || 'manager',
+        action,
+        details,
+        empCode,
+        targetId,
+        status,
+      };
+
+      // Optimistic local update
+      setAuditLogs((prev) => [newLog, ...prev.slice(0, 200)]);
+
+      try {
+        await setDoc(doc(db, 'activity_logs', newLog.id), newLog);
+      } catch (e) {
+        console.warn('Failed to push audit log to Firestore:', e);
+      }
+    },
+    [currentUser, manager]
+  );
+
+  // Helper check if current user can view CCCD of a worker
+  const canViewCccd = useCallback(
+    (worker?: Worker): boolean => {
+      if (!currentUser) return false;
+      if (currentUser.role === 'admin') return true;
+      if (currentUser.role === 'manager') {
+        if (!worker) return true;
+        if (!currentUser.assignedDorms || currentUser.assignedDorms.length === 0) return true;
+        return currentUser.assignedDorms.includes(worker.dorm);
+      }
+      return false;
+    },
+    [currentUser]
+  );
+
+  // Securely fetch CCCD images from Private Cloud Firestore /worker_documents/{workerId}
+  const fetchSecureCccdImages = useCallback(
+    async (workerId: string) => {
+      const targetWorker = workers.find((w) => w.id === workerId);
+      if (!canViewCccd(targetWorker)) {
+        await addAuditLog(
+          'VIEW_CCCD',
+          `Từ chối xem ảnh CCCD của công nhân (ID: ${workerId}) - Không đủ quyền hạn`,
+          targetWorker?.empCode,
+          workerId,
+          'DENIED'
+        );
+        return null;
+      }
+
+      try {
+        const secureDoc = await getSecureWorkerDocument(workerId);
+        if (secureDoc && (secureDoc.frontImage || secureDoc.backImage)) {
+          await addAuditLog(
+            'VIEW_CCCD',
+            `Xem ảnh CCCD bảo mật của công nhân ${targetWorker?.name || workerId} (Mã: ${targetWorker?.empCode || '-'})`,
+            targetWorker?.empCode,
+            workerId,
+            'SUCCESS'
+          );
+          return { frontImage: secureDoc.frontImage, backImage: secureDoc.backImage };
+        }
+
+        // Fallback to in-memory if available
+        if (targetWorker?.cccdFrontImage || targetWorker?.cccdBackImage) {
+          await addAuditLog(
+            'VIEW_CCCD',
+            `Xem ảnh CCCD bảo mật của công nhân ${targetWorker.name}`,
+            targetWorker.empCode,
+            workerId,
+            'SUCCESS'
+          );
+          return {
+            frontImage: targetWorker.cccdFrontImage,
+            backImage: targetWorker.cccdBackImage,
+          };
+        }
+
+        return null;
+      } catch (err) {
+        console.error('Error in fetchSecureCccdImages:', err);
+        return null;
+      }
+    },
+    [workers, canViewCccd, addAuditLog]
+  );
+
+  // Securely delete CCCD images from Private Cloud Firestore
+  const deleteSecureCccdImages = useCallback(
+    async (workerId: string) => {
+      const targetWorker = workers.find((w) => w.id === workerId);
+      if (!canViewCccd(targetWorker)) {
+        await addAuditLog(
+          'DELETE_CCCD',
+          `Từ chối xóa ảnh CCCD của công nhân ${workerId} - Không đủ quyền`,
+          targetWorker?.empCode,
+          workerId,
+          'DENIED'
+        );
+        return { success: false, message: 'Bạn không có quyền xóa ảnh CCCD của công nhân này!' };
+      }
+
+      await deleteSecureWorkerDocument(workerId);
+      await updateWorker(workerId, {
+        cccdFrontImage: '',
+        cccdBackImage: '',
+        cccdDocument: {
+          hasFront: false,
+          hasBack: false,
+          storagePath: '',
+        },
+      });
+
+      await addAuditLog(
+        'DELETE_CCCD',
+        `Xóa an toàn ảnh CCCD khỏi Cloud Storage cho công nhân ${targetWorker?.name || workerId}`,
+        targetWorker?.empCode,
+        workerId,
+        'SUCCESS'
+      );
+      return { success: true, message: 'Đã xóa an toàn ảnh CCCD khỏi hệ thống lưu trữ bảo mật!' };
+    },
+    [workers, canViewCccd, addAuditLog]
+  );
+
+  // Manual Force Sync function
+  const forceSyncNow = async () => {
+    setSyncStatus('syncing');
+    try {
+      const snap = await getDocs(collection(db, 'workers'));
+      const cloudWorkers: Worker[] = [];
+      snap.forEach((d) => cloudWorkers.push(d.data() as Worker));
+      if (cloudWorkers.length > 0) {
+        setWorkers(cloudWorkers);
+      }
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+    } catch (e) {
+      console.error('Force sync error:', e);
+      setSyncStatus('error');
+    }
+  };
 
   const setAutoSaveJsonOnExit = (val: boolean) => {
     setAutoSaveJsonOnExitState(val);
@@ -226,51 +648,34 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Helper to trigger JSON backup download
-  const downloadBackupJson = useCallback((customFileName?: string) => {
-    const payload = {
-      version: '1.0',
-      exportedAt: new Date().toISOString(),
-      appName: 'QUẢN LÝ KÝ TÚC XÁ CÔNG NHÂN',
-      manager,
-      config,
-      users,
-      workers,
-      auditLogs: auditLogs.slice(0, 500),
-    };
-    const jsonString = JSON.stringify(payload, null, 2);
-    const blob = new Blob([jsonString], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    a.download = customFileName || `Sao_Luu_KTX_${dateStr}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, [manager, config, users, workers, auditLogs]);
-
-  // Save continuous backup snapshot to local storage
-  useEffect(() => {
-    try {
-      const snapshotPayload = {
-        version: '1.0',
+  const downloadBackupJson = useCallback(
+    (customFileName?: string) => {
+      const payload = {
+        version: '2.0',
+        cloudSource: 'Firebase Firestore Realtime',
         exportedAt: new Date().toISOString(),
         appName: 'QUẢN LÝ KÝ TÚC XÁ CÔNG NHÂN',
         manager,
         config,
         users,
         workers,
-        auditLogs: auditLogs.slice(0, 200),
+        auditLogs: auditLogs.slice(0, 500),
       };
-      localStorage.setItem(STORAGE_KEYS.EXIT_SNAPSHOT, JSON.stringify(snapshotPayload));
-    } catch (e) {
-      console.warn('Failed to save continuous exit snapshot', e);
-    }
-  }, [workers, config, manager, users, auditLogs]);
+      const jsonString = JSON.stringify(payload, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.download = customFileName || `Sao_Luu_KTX_Cloud_${dateStr}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
+    [manager, config, users, workers, auditLogs]
+  );
 
-  // Retrieve latest exit backup snapshot
   const getLatestExitBackup = useCallback(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.EXIT_SNAPSHOT);
@@ -286,13 +691,12 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Listen to beforeunload and pagehide to auto save / download JSON when exiting
+  // Exit backup handler
   useEffect(() => {
     const handleExit = () => {
-      // 1. Force update snapshot
       try {
         const snapshotPayload = {
-          version: '1.0',
+          version: '2.0',
           exportedAt: new Date().toISOString(),
           appName: 'QUẢN LÝ KÝ TÚC XÁ CÔNG NHÂN',
           manager,
@@ -306,7 +710,6 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Exit snapshot failed', e);
       }
 
-      // 2. Trigger auto download if enabled
       if (autoSaveJsonOnExit && workers.length > 0) {
         const todayStr = new Date().toISOString().split('T')[0];
         downloadBackupJson(`Sao_Luu_Tu_Dong_Khi_Thoat_KTX_${todayStr}.json`);
@@ -322,94 +725,13 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [autoSaveJsonOnExit, workers, manager, config, users, auditLogs, downloadBackupJson]);
 
-  // Persist to local storage
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.WORKERS, JSON.stringify(workers));
-  }, [workers]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(config));
-  }, [config]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.MANAGER, JSON.stringify(manager));
-  }, [manager]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
-  }, [users]);
-
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-    }
-  }, [currentUser]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(auditLogs.slice(0, 300)));
-  }, [auditLogs]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.THEME, theme);
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [theme]);
-
-  // Log Audit helper
-  const addAuditLog = useCallback(
-    (action: AuditLog['action'], details: string, empCode?: string, targetId?: string) => {
-      const newLog: AuditLog = {
-        id: generateId('log'),
-        timestamp: new Date().toISOString(),
-        userName: currentUser?.name || manager.name || 'Hệ thống',
-        userEmail: currentUser?.email || 'system@local',
-        action,
-        details,
-        empCode,
-        targetId,
-      };
-      setAuditLogs((prev) => [newLog, ...prev]);
-    },
-    [currentUser, manager]
-  );
-
-  const updateTeamLeaderPhone = useCallback(
-    (leaderName: string, phone: string) => {
-      const key = leaderName.trim().toLowerCase();
-      setLeaderPhones((prev) => {
-        const updated = { ...prev, [key]: phone.trim() };
-        try {
-          localStorage.setItem(STORAGE_KEYS.LEADER_PHONES, JSON.stringify(updated));
-        } catch (e) {
-          console.warn('Failed to save leader phone', e);
-        }
-        return updated;
-      });
-      addAuditLog('UPDATE', `Cập nhật số điện thoại tổ trưởng ${leaderName}: ${phone.trim()}`);
-    },
-    [addAuditLog]
-  );
-
-  const setTheme = (newTheme: 'light' | 'dark') => {
-    setThemeState(newTheme);
-  };
-
-  const toggleTheme = () => {
-    setThemeState((prev) => (prev === 'light' ? 'dark' : 'light'));
-  };
-
-  // Auth
+  // Auth Operations
   const login = (email: string, pass: string) => {
     const trimmedEmail = email.trim().toLowerCase();
     const foundUser = users.find((u) => u.email.toLowerCase() === trimmedEmail);
 
     if (!foundUser) {
-      return { success: false, message: 'Email này chưa được Admin cấp quyền đăng nhập!' };
+      return { success: false, message: 'Email này chưa được Admin cấp quyền trên Cloud!' };
     }
 
     if (foundUser.password && foundUser.password !== pass) {
@@ -417,7 +739,7 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setCurrentUser(foundUser);
-    addAuditLog('LOGIN', `Người dùng ${foundUser.name} (${foundUser.email}) đã đăng nhập hệ thống`);
+    addAuditLog('LOGIN', `Người dùng ${foundUser.name} (${foundUser.email}) đăng nhập hệ thống Cloud`);
     return { success: true, message: `Đăng nhập thành công! Chào mừng ${foundUser.name}` };
   };
 
@@ -503,7 +825,6 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    // Check if leader phone is saved in leaderPhones or in workers
     leaderMap.forEach((entry, leaderKey) => {
       if (leaderPhones[leaderKey]) {
         entry.contactPhone = leaderPhones[leaderKey];
@@ -527,8 +848,8 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
         (w) => w.name.trim().toLowerCase() === entry.name.trim().toLowerCase()
       );
 
-      const primaryDorm = leaderAsWorker?.dorm || (sortedRooms[0]?.dorm);
-      const primaryRoom = leaderAsWorker?.room || (sortedRooms[0]?.room);
+      const primaryDorm = leaderAsWorker?.dorm || sortedRooms[0]?.dorm;
+      const primaryRoom = leaderAsWorker?.room || sortedRooms[0]?.room;
 
       return {
         name: entry.name,
@@ -567,48 +888,85 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const getWorkerByEmpCode = (empCode: string) =>
     workers.find((w) => w.empCode.trim().toLowerCase() === empCode.trim().toLowerCase());
 
-  // Worker CRUD
-  const addWorker = (
-    workerData: Omit<Worker, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'>,
+  const updateTeamLeaderPhone = useCallback(
+    async (leaderName: string, phone: string) => {
+      const key = leaderName.trim().toLowerCase();
+      setLeaderPhones((prev) => {
+        const updated = { ...prev, [key]: phone.trim() };
+        try {
+          localStorage.setItem(STORAGE_KEYS.LEADER_PHONES, JSON.stringify(updated));
+        } catch (e) {
+          console.warn('Failed to save leader phone', e);
+        }
+        return updated;
+      });
+      await addAuditLog('UPDATE', `Cập nhật số điện thoại tổ trưởng ${leaderName}: ${phone.trim()}`);
+    },
+    [addAuditLog]
+  );
+
+  const setTheme = (newTheme: 'light' | 'dark') => {
+    setThemeState(newTheme);
+  };
+
+  const toggleTheme = () => {
+    setThemeState((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
+
+  // ----------------------------------------------------
+  // WORKER CRUD OPERATIONS (CLOUD FIRESTORE)
+  // ----------------------------------------------------
+  const addWorker = async (
+    workerData: Partial<Worker>,
     overwriteIfDuplicate = false
   ) => {
-    const cleanEmpCode = workerData.empCode.trim();
+    setSyncStatus('saving');
+    const autoCode = `NV${Math.floor(1000 + Math.random() * 9000)}`;
+    const cleanEmpCode = (workerData.empCode && workerData.empCode.trim()) ? workerData.empCode.trim() : autoCode;
+    const cleanName = (workerData.name && workerData.name.trim()) ? workerData.name.trim() : 'Công nhân mới';
+    const cleanDorm = workerData.dorm && workerData.dorm > 0 ? workerData.dorm : 1;
+    const cleanRoom = workerData.room && workerData.room > 0 ? workerData.room : 1;
+    const cleanBed = workerData.bed && workerData.bed > 0 ? workerData.bed : 1;
+    const cleanStatus = workerData.status || 'Đang ở';
+
     const existing = workers.find(
       (w) => w.empCode.trim().toLowerCase() === cleanEmpCode.toLowerCase()
     );
 
     if (existing && !overwriteIfDuplicate) {
+      setSyncStatus('synced');
       return {
         success: false,
-        message: `Mã nhân viên "${cleanEmpCode}" đã tồn tại trên hệ thống!`,
+        message: `Mã nhân viên "${cleanEmpCode}" đã tồn tại trên Cloud Database!`,
         duplicateWorker: existing,
       };
     }
 
-    // Check room capacity
-    if (workerData.status === 'Đang ở') {
+    // Capacity checks
+    if (cleanStatus === 'Đang ở') {
       const roomOccupants = workers.filter(
         (w) =>
-          w.dorm === workerData.dorm &&
-          w.room === workerData.room &&
+          w.dorm === cleanDorm &&
+          w.room === cleanRoom &&
           w.status === 'Đang ở' &&
           w.id !== existing?.id
       );
 
       if (roomOccupants.length >= config.maxBedsPerRoom) {
+        setSyncStatus('synced');
         return {
           success: false,
-          message: `Phòng ${workerData.room} (Dãy ${workerData.dorm}) đã đạt sức chứa tối đa (${config.maxBedsPerRoom} người)!`,
+          message: `Phòng ${cleanRoom} (Dãy ${cleanDorm}) đã đạt sức chứa tối đa (${config.maxBedsPerRoom} người)!`,
         };
       }
 
-      // Check bed conflict
-      if (config.enforceBedControl && workerData.bed) {
-        const bedTaken = roomOccupants.find((w) => w.bed === workerData.bed);
+      if (config.enforceBedControl && cleanBed) {
+        const bedTaken = roomOccupants.find((w) => w.bed === cleanBed);
         if (bedTaken) {
+          setSyncStatus('synced');
           return {
             success: false,
-            message: `Giường số ${workerData.bed} tại Phòng ${workerData.room} (Dãy ${workerData.dorm}) đang có công nhân ${bedTaken.name} (${bedTaken.empCode}) ở!`,
+            message: `Giường số ${cleanBed} tại Phòng ${cleanRoom} (Dãy ${cleanDorm}) đang có công nhân ${bedTaken.name} (${bedTaken.empCode}) ở!`,
           };
         }
       }
@@ -618,78 +976,158 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const nowIso = new Date().toISOString();
     const operatorName = currentUser?.name || manager.name || 'Quản lý';
 
-    // Auto set entry date if active
     let entryDate = workerData.entryDate;
-    if (workerData.status === 'Đang ở' && !entryDate) {
+    if (cleanStatus === 'Đang ở' && !entryDate) {
       entryDate = today;
     }
 
-    if (existing && overwriteIfDuplicate) {
-      // Overwrite existing
-      const updatedList = workers.map((w) => {
-        if (w.id === existing.id) {
-          return {
-            ...w,
-            ...workerData,
-            entryDate,
-            updatedAt: nowIso,
-            updatedBy: operatorName,
-          };
-        }
-        return w;
-      });
+    const hasFront = Boolean(workerData.cccdFrontImage);
+    const hasBack = Boolean(workerData.cccdBackImage);
 
-      setWorkers(updatedList);
-      addAuditLog(
-        'UPDATE',
-        `Ghi đè thông tin công nhân ${workerData.name} (Mã: ${cleanEmpCode}, Dãy ${workerData.dorm} - P.${workerData.room})`,
-        cleanEmpCode,
-        existing.id
-      );
-      return { success: true, message: `Đã ghi đè thành công công nhân ${workerData.name} (${cleanEmpCode})!` };
+    if (existing && overwriteIfDuplicate) {
+      const updatedWorker: Worker = {
+        ...existing,
+        ...workerData,
+        name: cleanName,
+        empCode: cleanEmpCode,
+        dorm: cleanDorm,
+        room: cleanRoom,
+        bed: cleanBed,
+        status: cleanStatus,
+        entryDate,
+        updatedAt: nowIso,
+        updatedBy: operatorName,
+        cccdDocument: {
+          hasFront: hasFront || Boolean(existing.cccdDocument?.hasFront),
+          hasBack: hasBack || Boolean(existing.cccdDocument?.hasBack),
+          storagePath: `worker_documents/${existing.id}/`,
+          frontUploadedAt: hasFront ? nowIso : existing.cccdDocument?.frontUploadedAt,
+          backUploadedAt: hasBack ? nowIso : existing.cccdDocument?.backUploadedAt,
+        },
+      };
+
+      try {
+        if (hasFront || hasBack) {
+          await saveSecureWorkerDocument(
+            existing.id,
+            workerData.cccdFrontImage || existing.cccdFrontImage,
+            workerData.cccdBackImage || existing.cccdBackImage,
+            operatorName
+          );
+          await addAuditLog(
+            'UPLOAD_CCCD',
+            `Lưu ảnh CCCD vào Private Storage cho công nhân ${cleanName} (Mã: ${cleanEmpCode})`,
+            cleanEmpCode,
+            existing.id
+          );
+        }
+
+        await setDoc(doc(db, 'workers', existing.id), updatedWorker);
+        await addAuditLog(
+          'UPDATE',
+          `Ghi đè thông tin công nhân ${cleanName} (Mã: ${cleanEmpCode}, Dãy ${cleanDorm} - P.${cleanRoom})`,
+          cleanEmpCode,
+          existing.id
+        );
+        setSyncStatus('synced');
+        setLastSyncTime(new Date());
+        return { success: true, message: `Đã ghi đè thành công lên Cloud: ${cleanName} (${cleanEmpCode})!` };
+      } catch (e: any) {
+        console.error('Error saving worker to Firestore:', e);
+        setSyncStatus('error');
+        return { success: false, message: `Lỗi lưu Cloud: ${e.message}` };
+      }
     }
 
-    // Create new
+    const workerId = generateId('w');
     const newWorker: Worker = {
-      ...workerData,
-      id: generateId('w'),
+      id: workerId,
+      name: cleanName,
+      empCode: cleanEmpCode,
+      dorm: cleanDorm,
+      room: cleanRoom,
+      bed: cleanBed,
+      dob: workerData.dob || '',
+      teamLeader: workerData.teamLeader || '',
+      status: cleanStatus,
+      cccd: workerData.cccd || '',
+      address: workerData.address || '',
+      phone: workerData.phone || '',
+      workplace: workerData.workplace || '',
+      note: workerData.note || '',
+      gender: workerData.gender || '',
+      hometown: workerData.hometown || '',
+      issueDate: workerData.issueDate || '',
+      issuePlace: workerData.issuePlace || '',
       entryDate,
-      exitDate: workerData.status === 'Đã rời KTX' ? (workerData.exitDate || today) : '',
+      exitDate: cleanStatus === 'Đã rời KTX' ? workerData.exitDate || today : '',
       createdAt: nowIso,
       updatedAt: nowIso,
       createdBy: operatorName,
       updatedBy: operatorName,
+      cccdDocument: {
+        hasFront,
+        hasBack,
+        storagePath: (hasFront || hasBack) ? `worker_documents/${workerId}/` : undefined,
+        frontUploadedAt: hasFront ? nowIso : undefined,
+        backUploadedAt: hasBack ? nowIso : undefined,
+      },
     };
 
-    setWorkers((prev) => [newWorker, ...prev]);
-    addAuditLog(
-      'CREATE',
-      `Thêm mới công nhân ${newWorker.name} (Mã: ${newWorker.empCode}, Dãy ${newWorker.dorm} - Phòng ${newWorker.room})`,
-      newWorker.empCode,
-      newWorker.id
-    );
+    try {
+      if (hasFront || hasBack) {
+        await saveSecureWorkerDocument(
+          workerId,
+          workerData.cccdFrontImage,
+          workerData.cccdBackImage,
+          operatorName
+        );
+        await addAuditLog(
+          'UPLOAD_CCCD',
+          `Lưu an toàn ảnh CCCD vào Private Cloud Storage cho công nhân ${cleanName} (Mã: ${cleanEmpCode})`,
+          cleanEmpCode,
+          workerId
+        );
+      }
 
-    return { success: true, message: `Đã thêm thành công công nhân ${newWorker.name}!` };
+      await setDoc(doc(db, 'workers', newWorker.id), newWorker);
+      await addAuditLog(
+        'CREATE',
+        `Thêm mới công nhân ${newWorker.name} (Mã: ${newWorker.empCode}, Dãy ${newWorker.dorm} - Phòng ${newWorker.room})`,
+        newWorker.empCode,
+        newWorker.id
+      );
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      return { success: true, message: `Đã lưu công nhân ${newWorker.name} lên Cloud Database thành công!` };
+    } catch (e: any) {
+      console.error('Error saving new worker to Firestore:', e);
+      setSyncStatus('error');
+      return { success: false, message: `Lỗi lưu Cloud: ${e.message}` };
+    }
   };
 
-  const updateWorker = (
+  const updateWorker = async (
     id: string,
     updates: Partial<Omit<Worker, 'id' | 'createdAt' | 'createdBy'>>
   ) => {
+    setSyncStatus('saving');
     const existing = workers.find((w) => w.id === id);
     if (!existing) {
-      return { success: false, message: 'Không tìm thấy thông tin công nhân cần cập nhật!' };
+      setSyncStatus('synced');
+      return { success: false, message: 'Không tìm thấy thông tin công nhân trên hệ thống!' };
     }
 
-    // If changing empCode, check collision
+    // Check empCode collision
     if (updates.empCode && updates.empCode.trim().toLowerCase() !== existing.empCode.toLowerCase()) {
-      const codeCollision = workers.find(
+      const collision = workers.find(
         (w) => w.id !== id && w.empCode.trim().toLowerCase() === updates.empCode!.trim().toLowerCase()
       );
-      if (codeCollision) {
+      if (collision) {
+        setSyncStatus('synced');
         return {
           success: false,
-          message: `Mã nhân viên "${updates.empCode}" đã thuộc về công nhân ${codeCollision.name}!`,
+          message: `Mã nhân viên "${updates.empCode}" đã thuộc về công nhân ${collision.name}!`,
         };
       }
     }
@@ -699,12 +1137,12 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const targetBed = updates.bed !== undefined ? updates.bed : existing.bed;
     const targetStatus = updates.status !== undefined ? updates.status : existing.status;
 
-    // Check room capacity if staying active
     if (targetStatus === 'Đang ở') {
       const otherOccupants = workers.filter(
         (w) => w.id !== id && w.dorm === targetDorm && w.room === targetRoom && w.status === 'Đang ở'
       );
       if (otherOccupants.length >= config.maxBedsPerRoom) {
+        setSyncStatus('synced');
         return {
           success: false,
           message: `Phòng ${targetRoom} (Dãy ${targetDorm}) đã đầy sức chứa tối đa (${config.maxBedsPerRoom} người)!`,
@@ -713,6 +1151,7 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (config.enforceBedControl && targetBed) {
         const bedCollision = otherOccupants.find((w) => w.bed === targetBed);
         if (bedCollision) {
+          setSyncStatus('synced');
           return {
             success: false,
             message: `Giường số ${targetBed} tại Phòng ${targetRoom} đang có công nhân ${bedCollision.name} (${bedCollision.empCode}) ở!`,
@@ -725,7 +1164,6 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const nowIso = new Date().toISOString();
     const operatorName = currentUser?.name || manager.name || 'Quản lý';
 
-    // Status transition tracking
     let newEntryDate = updates.entryDate !== undefined ? updates.entryDate : existing.entryDate;
     let newExitDate = updates.exitDate !== undefined ? updates.exitDate : existing.exitDate;
 
@@ -736,6 +1174,12 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
       newExitDate = today;
     }
 
+    // Check if new CCCD photos are provided
+    const hasNewFront = updates.cccdFrontImage !== undefined;
+    const hasNewBack = updates.cccdBackImage !== undefined;
+    const updatedFront = hasNewFront ? updates.cccdFrontImage : existing.cccdFrontImage;
+    const updatedBack = hasNewBack ? updates.cccdBackImage : existing.cccdBackImage;
+
     const updatedWorker: Worker = {
       ...existing,
       ...updates,
@@ -743,65 +1187,142 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
       exitDate: newExitDate,
       updatedAt: nowIso,
       updatedBy: operatorName,
+      cccdDocument: {
+        hasFront: Boolean(updatedFront),
+        hasBack: Boolean(updatedBack),
+        storagePath: (updatedFront || updatedBack) ? `worker_documents/${id}/` : undefined,
+        frontUploadedAt: hasNewFront && updatedFront ? nowIso : existing.cccdDocument?.frontUploadedAt,
+        backUploadedAt: hasNewBack && updatedBack ? nowIso : existing.cccdDocument?.backUploadedAt,
+      },
     };
 
-    setWorkers((prev) => prev.map((w) => (w.id === id ? updatedWorker : w)));
-    addAuditLog(
-      'UPDATE',
-      `Cập nhật công nhân ${updatedWorker.name} (${updatedWorker.empCode}) - Dãy ${updatedWorker.dorm}, P.${updatedWorker.room}`,
-      updatedWorker.empCode,
-      id
-    );
+    try {
+      if (hasNewFront || hasNewBack) {
+        if (updatedFront || updatedBack) {
+          await saveSecureWorkerDocument(id, updatedFront, updatedBack, operatorName);
+          await addAuditLog(
+            'UPDATE_CCCD',
+            `Cập nhật ảnh CCCD trong Private Storage cho công nhân ${updatedWorker.name} (${updatedWorker.empCode})`,
+            updatedWorker.empCode,
+            id
+          );
+        } else {
+          await deleteSecureWorkerDocument(id);
+        }
+      }
 
-    return { success: true, message: `Đã cập nhật công nhân ${updatedWorker.name} thành công!` };
+      await setDoc(doc(db, 'workers', id), updatedWorker);
+
+      // Check if room transfer happened
+      const isTransferred = existing.dorm !== updatedWorker.dorm || existing.room !== updatedWorker.room;
+      const transferDetail = isTransferred
+        ? ` (Chuyển từ Dãy ${existing.dorm}-P.${existing.room} sang Dãy ${updatedWorker.dorm}-P.${updatedWorker.room})`
+        : '';
+
+      await addAuditLog(
+        'UPDATE',
+        `Cập nhật công nhân ${updatedWorker.name} (${updatedWorker.empCode}) - Dãy ${updatedWorker.dorm}, P.${updatedWorker.room}${transferDetail}`,
+        updatedWorker.empCode,
+        id
+      );
+
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      return { success: true, message: `Đã cập nhật công nhân ${updatedWorker.name} thành công trên Cloud!` };
+    } catch (e: any) {
+      console.error('Error updating worker in Firestore:', e);
+      setSyncStatus('error');
+      return { success: false, message: `Lỗi cập nhật Cloud: ${e.message}` };
+    }
   };
 
-  const deleteWorker = (id: string) => {
+  const deleteWorker = async (id: string) => {
+    setSyncStatus('saving');
     const target = workers.find((w) => w.id === id);
-    if (!target) return { success: false, message: 'Không tìm thấy công nhân cần xóa!' };
+    if (!target) {
+      setSyncStatus('synced');
+      return { success: false, message: 'Không tìm thấy công nhân cần xóa!' };
+    }
 
-    setWorkers((prev) => prev.filter((w) => w.id !== id));
-    addAuditLog(
-      'DELETE',
-      `Xóa công nhân ${target.name} (Mã: ${target.empCode}, Dãy ${target.dorm} - Phòng ${target.room})`,
-      target.empCode,
-      id
-    );
-    return { success: true, message: `Đã xóa công nhân ${target.name} (${target.empCode})!` };
+    try {
+      // 1. Delete document from private worker_documents storage
+      await deleteSecureWorkerDocument(id);
+
+      // 2. Delete worker record from workers collection
+      await deleteDoc(doc(db, 'workers', id));
+
+      await addAuditLog(
+        'DELETE_CCCD',
+        `Đã tự động xóa tài liệu ảnh CCCD trong Private Storage khi xóa công nhân ${target.name} (Mã: ${target.empCode})`,
+        target.empCode,
+        id
+      );
+
+      await addAuditLog(
+        'DELETE',
+        `Xóa công nhân ${target.name} (Mã: ${target.empCode}, Dãy ${target.dorm} - Phòng ${target.room})`,
+        target.empCode,
+        id
+      );
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      return { success: true, message: `Đã xóa công nhân ${target.name} (${target.empCode}) khỏi Cloud Database!` };
+    } catch (e: any) {
+      console.error('Error deleting worker from Firestore:', e);
+      setSyncStatus('error');
+      return { success: false, message: `Lỗi xóa Cloud: ${e.message}` };
+    }
   };
 
-  const deleteWorkerByEmpCode = (empCode: string) => {
+  const deleteWorkerByEmpCode = async (empCode: string) => {
+    setSyncStatus('saving');
     const cleanCode = empCode.trim();
     const target = workers.find(
       (w) => w.empCode.trim().toLowerCase() === cleanCode.toLowerCase()
     );
     if (!target) {
+      setSyncStatus('synced');
       return { success: false, message: `Không tìm thấy công nhân có mã "${cleanCode}"!` };
     }
 
-    setWorkers((prev) => prev.filter((w) => w.id !== target.id));
-    addAuditLog(
-      'DELETE',
-      `Xóa theo mã NV: ${target.name} (Mã: ${target.empCode})`,
-      target.empCode,
-      target.id
-    );
-    return { success: true, message: `Đã xóa thành công công nhân ${target.name} (${target.empCode})!`, deletedWorker: target };
+    try {
+      await deleteDoc(doc(db, 'workers', target.id));
+      await addAuditLog(
+        'DELETE',
+        `Xóa theo mã NV: ${target.name} (Mã: ${target.empCode})`,
+        target.empCode,
+        target.id
+      );
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      return { success: true, message: `Đã xóa thành công công nhân ${target.name} (${target.empCode}) khỏi Cloud!`, deletedWorker: target };
+    } catch (e: any) {
+      console.error('Error deleting worker by empCode from Firestore:', e);
+      setSyncStatus('error');
+      return { success: false, message: `Lỗi xóa Cloud: ${e.message}` };
+    }
   };
 
-  // Manager & Scale Config
-  const updateManagerInfo = (info: Partial<ManagerInfo>) => {
-    setManager((prev) => {
-      const updated = { ...prev, ...info };
-      addAuditLog('UPDATE', `Thay đổi thông tin người quản lý thành "${updated.name}"`);
-      return updated;
-    });
+  // ----------------------------------------------------
+  // CONFIG & MANAGER (CLOUD FIRESTORE)
+  // ----------------------------------------------------
+  const updateManagerInfo = async (info: Partial<ManagerInfo>) => {
+    setSyncStatus('saving');
+    const updated = { ...manager, ...info };
+    try {
+      await setDoc(doc(db, 'manager_info', 'current'), updated);
+      await addAuditLog('UPDATE', `Thay đổi thông tin người quản lý thành "${updated.name}"`);
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+    } catch (e) {
+      console.warn('Error updating manager info to Cloud:', e);
+      setSyncStatus('error');
+    }
   };
 
-  const updateConfig = (newConfig: DormConfig) => {
-    // Check if down-scaling would exclude existing active workers
+  const updateConfig = async (newConfig: DormConfig) => {
     const activeWorkers = workers.filter((w) => w.status === 'Đang ở');
-    
+
     const invalidDorm = activeWorkers.find((w) => w.dorm > newConfig.numDorms);
     if (invalidDorm) {
       return {
@@ -826,16 +1347,28 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    setConfig(newConfig);
-    addAuditLog(
-      'SCALE_CHANGE',
-      `Thay đổi cấu hình quy mô KTX: ${newConfig.numDorms} dãy, ${newConfig.roomsPerDorm} phòng/dãy, tối đa ${newConfig.maxBedsPerRoom} người/phòng`
-    );
-    return { success: true, message: 'Đã lưu cấu hình quy mô Ký túc xá thành công!' };
+    setSyncStatus('saving');
+    try {
+      await setDoc(doc(db, 'system_config', 'main'), newConfig);
+      await addAuditLog(
+        'SCALE_CHANGE',
+        `Thay đổi cấu hình quy mô KTX: ${newConfig.numDorms} dãy, ${newConfig.roomsPerDorm} phòng/dãy, tối đa ${newConfig.maxBedsPerRoom} người/phòng`
+      );
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      return { success: true, message: 'Đã lưu cấu hình quy mô Ký túc xá lên Cloud thành công!' };
+    } catch (e: any) {
+      console.error('Error updating config in Firestore:', e);
+      setSyncStatus('error');
+      return { success: false, message: `Lỗi cập nhật cấu hình: ${e.message}` };
+    }
   };
 
-  // Import Workers
-  const importWorkers = (rows: ImportPreviewRow[], overwriteDuplicates = true) => {
+  // ----------------------------------------------------
+  // EXCEL IMPORT / RESTORE (BATCH WRITES TO CLOUD)
+  // ----------------------------------------------------
+  const importWorkers = async (rows: ImportPreviewRow[], overwriteDuplicates = true) => {
+    setSyncStatus('saving');
     const today = getTodayStr();
     const nowIso = new Date().toISOString();
     const operatorName = currentUser?.name || manager.name || 'Quản lý';
@@ -846,6 +1379,8 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const workerMap = new Map<string, Worker>();
     workers.forEach((w) => workerMap.set(w.empCode.toLowerCase(), w));
 
+    const toWriteList: Worker[] = [];
+
     rows.forEach((row) => {
       if (!row.isValid) return;
 
@@ -854,7 +1389,7 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (existing) {
         if (overwriteDuplicates) {
-          workerMap.set(codeKey, {
+          const updated: Worker = {
             ...existing,
             name: row.name,
             dob: row.dob || existing.dob,
@@ -870,7 +1405,9 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
             note: row.note || existing.note,
             updatedAt: nowIso,
             updatedBy: operatorName,
-          });
+          };
+          workerMap.set(codeKey, updated);
+          toWriteList.push(updated);
           updatedCount++;
         }
       } else {
@@ -897,24 +1434,42 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedBy: operatorName,
         };
         workerMap.set(codeKey, newWorker);
+        toWriteList.push(newWorker);
         importedCount++;
       }
     });
 
-    const newWorkerList = Array.from(workerMap.values());
-    setWorkers(newWorkerList);
-    addAuditLog(
-      'IMPORT',
-      `Nhập Excel: Thêm mới ${importedCount} công nhân, cập nhật ${updatedCount} công nhân`
-    );
+    try {
+      // Chunk writes into Firestore batches (max 400 per batch)
+      const chunkSize = 400;
+      for (let i = 0; i < toWriteList.length; i += chunkSize) {
+        const chunk = toWriteList.slice(i, i + chunkSize);
+        const batch = writeBatch(db);
+        chunk.forEach((item) => {
+          batch.set(doc(db, 'workers', item.id), item);
+        });
+        await batch.commit();
+      }
 
-    return { success: true, importedCount, updatedCount };
+      await addAuditLog(
+        'IMPORT',
+        `Nhập Excel lên Cloud: Thêm mới ${importedCount} công nhân, cập nhật ${updatedCount} công nhân`
+      );
+
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      return { success: true, importedCount, updatedCount };
+    } catch (e) {
+      console.error('Error importing workers to Firestore:', e);
+      setSyncStatus('error');
+      return { success: false, importedCount: 0, updatedCount: 0 };
+    }
   };
 
-  // Backup & Restore
   const backupData = () => {
     return {
-      version: '1.0',
+      version: '2.0',
+      cloudSource: 'Firebase Firestore Realtime',
       exportedAt: new Date().toISOString(),
       appName: 'QUẢN LÝ KÝ TÚC XÁ CÔNG NHÂN',
       manager,
@@ -924,39 +1479,69 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
-  const restoreData = (jsonData: any, overwrite = true) => {
+  const restoreData = async (jsonData: any, overwrite = true) => {
+    setSyncStatus('saving');
     try {
       if (!jsonData || !Array.isArray(jsonData.workers)) {
+        setSyncStatus('synced');
         return { success: false, message: 'File JSON không hợp lệ hoặc thiếu dữ liệu danh sách công nhân!' };
       }
 
       if (overwrite) {
-        setWorkers(jsonData.workers);
-        if (jsonData.config) setConfig(jsonData.config);
-        if (jsonData.manager) setManager(jsonData.manager);
-        if (Array.isArray(jsonData.users) && jsonData.users.length > 0) setUsers(jsonData.users);
+        // Clear old and write new in batches
+        const oldSnapshot = await getDocs(collection(db, 'workers'));
+        const deleteBatch = writeBatch(db);
+        oldSnapshot.forEach((d) => deleteBatch.delete(d.ref));
+        await deleteBatch.commit();
+
+        const insertWorkers: Worker[] = jsonData.workers;
+        for (let i = 0; i < insertWorkers.length; i += 400) {
+          const chunk = insertWorkers.slice(i, i + 400);
+          const b = writeBatch(db);
+          chunk.forEach((w) => b.set(doc(db, 'workers', w.id || generateId('w')), w));
+          await b.commit();
+        }
+
+        if (jsonData.config) await setDoc(doc(db, 'system_config', 'main'), jsonData.config);
+        if (jsonData.manager) await setDoc(doc(db, 'manager_info', 'current'), jsonData.manager);
+        if (Array.isArray(jsonData.users) && jsonData.users.length > 0) {
+          const userBatch = writeBatch(db);
+          jsonData.users.forEach((u: User) => userBatch.set(doc(db, 'users', u.id), u));
+          await userBatch.commit();
+        }
       } else {
-        // Append / merge
         const existingCodes = new Set(workers.map((w) => w.empCode.toLowerCase()));
         const toAdd = jsonData.workers.filter(
           (w: Worker) => w.empCode && !existingCodes.has(w.empCode.toLowerCase())
         );
-        setWorkers((prev) => [...prev, ...toAdd]);
+        for (let i = 0; i < toAdd.length; i += 400) {
+          const chunk = toAdd.slice(i, i + 400);
+          const b = writeBatch(db);
+          chunk.forEach((w: Worker) => b.set(doc(db, 'workers', w.id || generateId('w')), w));
+          await b.commit();
+        }
       }
 
-      addAuditLog('RESTORE', `Khôi phục dữ liệu từ file JSON (${jsonData.workers.length} công nhân)`);
-      return { success: true, message: `Khôi phục thành công ${jsonData.workers.length} hồ sơ công nhân!` };
+      await addAuditLog('RESTORE', `Khôi phục dữ liệu lên Cloud từ file JSON (${jsonData.workers.length} công nhân)`);
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      return { success: true, message: `Khôi phục thành công ${jsonData.workers.length} hồ sơ công nhân lên Cloud!` };
     } catch (e: any) {
+      console.error('Restore data error:', e);
+      setSyncStatus('error');
       return { success: false, message: `Lỗi khôi phục: ${e.message}` };
     }
   };
 
-  const mergeJsonData = (jsonList: any[], conflictStrategy: 'keep_existing' | 'overwrite') => {
+  const mergeJsonData = async (jsonList: any[], conflictStrategy: 'keep_existing' | 'overwrite') => {
+    setSyncStatus('saving');
     try {
       let added = 0;
       let updated = 0;
       const workerMap = new Map<string, Worker>();
       workers.forEach((w) => workerMap.set(w.empCode.toLowerCase(), w));
+
+      const toWriteList: Worker[] = [];
 
       jsonList.forEach((fileObj) => {
         if (fileObj && Array.isArray(fileObj.workers)) {
@@ -965,80 +1550,130 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const codeKey = w.empCode.toLowerCase();
             if (workerMap.has(codeKey)) {
               if (conflictStrategy === 'overwrite') {
-                workerMap.set(codeKey, { ...workerMap.get(codeKey)!, ...w });
+                const combined = { ...workerMap.get(codeKey)!, ...w };
+                workerMap.set(codeKey, combined);
+                toWriteList.push(combined);
                 updated++;
               }
             } else {
-              workerMap.set(codeKey, w);
+              const newW = { ...w, id: w.id || generateId('w_mrg') };
+              workerMap.set(codeKey, newW);
+              toWriteList.push(newW);
               added++;
             }
           });
         }
       });
 
-      setWorkers(Array.from(workerMap.values()));
-      addAuditLog('RESTORE', `Gộp ${jsonList.length} file JSON: Thêm ${added}, cập nhật ${updated}`);
+      for (let i = 0; i < toWriteList.length; i += 400) {
+        const chunk = toWriteList.slice(i, i + 400);
+        const b = writeBatch(db);
+        chunk.forEach((item) => b.set(doc(db, 'workers', item.id), item));
+        await b.commit();
+      }
+
+      await addAuditLog('RESTORE', `Gộp ${jsonList.length} file JSON lên Cloud: Thêm ${added}, cập nhật ${updated}`);
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
       return { success: true, addedCount: added, updatedCount: updated };
     } catch (e: any) {
+      console.error('Merge JSON error:', e);
+      setSyncStatus('error');
       return { success: false, addedCount: 0, updatedCount: 0 };
     }
   };
 
-  // User Management (Admin)
-  const addUser = (userData: Omit<User, 'id' | 'createdAt'>) => {
+  // ----------------------------------------------------
+  // USER MANAGEMENT (CLOUD FIRESTORE)
+  // ----------------------------------------------------
+  const addUser = async (userData: Omit<User, 'id' | 'createdAt'>) => {
     const existing = users.find((u) => u.email.toLowerCase() === userData.email.toLowerCase());
     if (existing) {
       return { success: false, message: 'Email này đã tồn tại trong danh sách tài khoản!' };
     }
 
+    setSyncStatus('saving');
     const newUser: User = {
       ...userData,
       id: generateId('user'),
       createdAt: new Date().toISOString(),
     };
 
-    setUsers((prev) => [...prev, newUser]);
-    addAuditLog('CREATE', `Admin thêm tài khoản mới: ${newUser.name} (${newUser.email}, quyền: ${newUser.role})`);
-    return { success: true, message: `Đã tạo tài khoản ${newUser.name} thành công!` };
+    try {
+      await setDoc(doc(db, 'users', newUser.id), newUser);
+      await addAuditLog('CREATE', `Admin thêm tài khoản mới: ${newUser.name} (${newUser.email}, quyền: ${newUser.role})`);
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      return { success: true, message: `Đã tạo tài khoản ${newUser.name} trên Cloud thành công!` };
+    } catch (e: any) {
+      console.error('Error adding user to Firestore:', e);
+      setSyncStatus('error');
+      return { success: false, message: `Lỗi tạo tài khoản: ${e.message}` };
+    }
   };
 
-  const updateUser = (id: string, updates: Partial<User>) => {
-    setUsers((prev) =>
-      prev.map((u) => {
-        if (u.id === id) {
-          const updated = { ...u, ...updates };
-          addAuditLog('UPDATE', `Admin cập nhật tài khoản: ${updated.name} (${updated.email})`);
-          return updated;
-        }
-        return u;
-      })
-    );
-    return { success: true, message: 'Đã cập nhật tài khoản người dùng!' };
+  const updateUser = async (id: string, updates: Partial<User>) => {
+    setSyncStatus('saving');
+    const existing = users.find((u) => u.id === id);
+    if (!existing) {
+      setSyncStatus('synced');
+      return { success: false, message: 'Không tìm thấy người dùng!' };
+    }
+
+    const updated = { ...existing, ...updates };
+    try {
+      await setDoc(doc(db, 'users', id), updated);
+      await addAuditLog('UPDATE', `Admin cập nhật tài khoản: ${updated.name} (${updated.email})`);
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      return { success: true, message: 'Đã cập nhật tài khoản người dùng trên Cloud!' };
+    } catch (e: any) {
+      console.error('Error updating user in Firestore:', e);
+      setSyncStatus('error');
+      return { success: false, message: `Lỗi cập nhật: ${e.message}` };
+    }
   };
 
-  const deleteUser = (id: string) => {
+  const deleteUser = async (id: string) => {
     const target = users.find((u) => u.id === id);
     if (!target) return { success: false, message: 'Không tìm thấy tài khoản cần xóa!' };
     if (target.email.toLowerCase() === 'liencp85@gmail.com') {
       return { success: false, message: 'Không thể xóa tài khoản Admin gốc (Liencp85@gmail.com)!' };
     }
 
-    setUsers((prev) => prev.filter((u) => u.id !== id));
-    addAuditLog('DELETE', `Admin xóa tài khoản: ${target.name} (${target.email})`);
-    return { success: true, message: `Đã xóa tài khoản ${target.name}!` };
+    setSyncStatus('saving');
+    try {
+      await deleteDoc(doc(db, 'users', id));
+      await addAuditLog('DELETE', `Admin xóa tài khoản: ${target.name} (${target.email})`);
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      return { success: true, message: `Đã xóa tài khoản ${target.name} trên Cloud!` };
+    } catch (e: any) {
+      console.error('Error deleting user from Firestore:', e);
+      setSyncStatus('error');
+      return { success: false, message: `Lỗi xóa tài khoản: ${e.message}` };
+    }
   };
 
-  const resetToDemoData = () => {
-    setWorkers(INITIAL_WORKERS);
-    setConfig(INITIAL_CONFIG);
-    setManager(INITIAL_MANAGER);
-    setUsers(INITIAL_USERS);
-    addAuditLog('RESTORE', 'Đã tải lại dữ liệu mẫu Demo KTX');
+  const resetToDemoData = async () => {
+    await seedInitialFirestoreData();
+    await addAuditLog('RESTORE', 'Đã tải lại dữ liệu mẫu Demo KTX lên Cloud');
   };
 
-  const clearAllWorkers = () => {
-    setWorkers([]);
-    addAuditLog('DELETE', 'Đã làm trống toàn bộ dữ liệu công nhân (Khởi tạo trắng)');
+  const clearAllWorkers = async () => {
+    setSyncStatus('saving');
+    try {
+      const snap = await getDocs(collection(db, 'workers'));
+      const batch = writeBatch(db);
+      snap.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+      await addAuditLog('DELETE', 'Đã làm trống toàn bộ dữ liệu công nhân trên Cloud (Khởi tạo trắng)');
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+    } catch (e) {
+      console.error('Error clearing workers in Firestore:', e);
+      setSyncStatus('error');
+    }
   };
 
   return (
@@ -1053,6 +1688,10 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
         theme,
         setTheme,
         toggleTheme,
+        syncStatus,
+        isOnline,
+        lastSyncTime,
+        forceSyncNow,
         login,
         logout,
         addWorker,
@@ -1061,6 +1700,10 @@ export const DormProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteWorkerByEmpCode,
         getWorkerById,
         getWorkerByEmpCode,
+        canViewCccd,
+        fetchSecureCccdImages,
+        deleteSecureCccdImages,
+        addAuditLog,
         updateManagerInfo,
         updateConfig,
         importWorkers,

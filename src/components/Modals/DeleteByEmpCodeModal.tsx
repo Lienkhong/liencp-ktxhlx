@@ -36,9 +36,9 @@ export const DeleteByEmpCodeModal: React.FC<DeleteByEmpCodeModalProps> = ({
     setHasSearched(true);
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!searchedWorker) return;
-    const res = deleteWorker(searchedWorker.id);
+    const res = await deleteWorker(searchedWorker.id);
     if (res.success) {
       onSuccessToast(`Đã xóa thành công công nhân ${searchedWorker.name} (Mã: ${searchedWorker.empCode})`);
       onClose();

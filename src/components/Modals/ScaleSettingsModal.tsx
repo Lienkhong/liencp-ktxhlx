@@ -81,7 +81,7 @@ export const ScaleSettingsModal: React.FC<ScaleSettingsModalProps> = ({
   const latestSnapshot = getLatestExitBackup();
 
   // Handle Scale Save
-  const handleSaveScale = (e: React.FormEvent) => {
+  const handleSaveScale = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (numDorms < 1 || numDorms > 100) {
@@ -109,7 +109,7 @@ export const ScaleSettingsModal: React.FC<ScaleSettingsModalProps> = ({
       return;
     }
 
-    const res = updateConfig({
+    const res = await updateConfig({
       numDorms,
       roomsPerDorm,
       maxBedsPerRoom,
@@ -152,9 +152,9 @@ export const ScaleSettingsModal: React.FC<ScaleSettingsModalProps> = ({
     e.target.value = '';
   };
 
-  const handleConfirmRestore = () => {
+  const handleConfirmRestore = async () => {
     if (!confirmOverwriteModal) return;
-    const res = restoreData(confirmOverwriteModal.backupData, true);
+    const res = await restoreData(confirmOverwriteModal.backupData, true);
     if (res.success) {
       onSuccessToast(res.message);
       setConfirmOverwriteModal(null);
@@ -185,7 +185,7 @@ export const ScaleSettingsModal: React.FC<ScaleSettingsModalProps> = ({
       return;
     }
 
-    const res = mergeJsonData(parsedList, 'keep_existing');
+    const res = await mergeJsonData(parsedList, 'keep_existing');
     if (res.success) {
       onSuccessToast(`Đã ghép thành công ${parsedList.length} file JSON! Thêm mới: ${res.addedCount}, Cập nhật: ${res.updatedCount}`);
       onClose();

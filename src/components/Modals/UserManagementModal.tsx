@@ -10,6 +10,9 @@ import {
   Lock,
   Mail,
   User,
+  Link2,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { User as UserType, UserRole } from '../../types';
 import { useDorm } from '../../context/DormContext';
@@ -34,17 +37,31 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   const [newPassword, setNewPassword] = useState('');
   const [newName, setNewName] = useState('');
   const [newRole, setNewRole] = useState<UserRole>('viewer');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const handleAddUser = (e: React.FormEvent) => {
+  const baseUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}${window.location.pathname}`
+    : '';
+
+  const copyUserLink = (role: UserRole, id: string, name: string) => {
+    const link = `${baseUrl}?portal=${role}`;
+    navigator.clipboard.writeText(link).then(() => {
+      setCopiedId(id);
+      onSuccessToast(`Đã sao chép đường dẫn truy cập cho ${name}!`);
+      setTimeout(() => setCopiedId(null), 2500);
+    });
+  };
+
+  const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newEmail.trim() || !newPassword.trim() || !newName.trim()) {
       onErrorToast('Vui lòng điền đầy đủ email, mật khẩu và họ tên!');
       return;
     }
 
-    const res = addUser({
+    const res = await addUser({
       email: newEmail.trim(),
       password: newPassword.trim(),
       name: newName.trim(),
@@ -63,12 +80,12 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     }
   };
 
-  const handleDelete = (userId: string, email: string) => {
+  const handleDelete = async (userId: string, email: string) => {
     if (email === 'Liencp85@gmail.com') {
       onErrorToast('Không thể xóa tài khoản Quản trị viên tối cao (Super Admin)!');
       return;
     }
-    const res = deleteUser(userId);
+    const res = await deleteUser(userId);
     if (res.success) {
       onSuccessToast(res.message);
     } else {
@@ -247,6 +264,19 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
                   {/* Role Selector & Actions */}
                   <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => copyUserLink(u.role, u.id, u.name)}
+                      className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded transition-colors"
+                      title={`Sao chép link truy cập cho ${u.name}`}
+                    >
+                      {copiedId === u.id ? (
+                        <Check className="w-4 h-4 text-emerald-600" />
+                      ) : (
+                        <Copy className="w-4 h-4" />
+                      )}
+                    </button>
+
                     <select
                       disabled={isSuperAdmin}
                       value={u.role}
