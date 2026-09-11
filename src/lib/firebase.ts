@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getFirestore,
+  initializeFirestore,
   collection,
   doc,
   getDoc,
@@ -18,39 +19,76 @@ import {
   Firestore,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { compressImageBase64 } from '../utils/helpers';
 
 // Initialize Firebase App
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Firestore (using specific databaseId if provided, or default)
-export const db: Firestore = (firebaseConfig as any).firestoreDatabaseId
-  ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
-  : getFirestore(app);
-
-// Enable offline persistence if supported in browser environment
-if (typeof window !== 'undefined') {
+// Initialize Firestore with ignoreUndefinedProperties
+export const db: Firestore = (() => {
+  const dbId = (firebaseConfig as any).firestoreDatabaseId;
   try {
-    enableIndexedDbPersistence(db).catch((err) => {
-      if (err.code === 'failed-precondition') {
-        console.warn('Firestore persistence failed: Multiple tabs open');
-      } else if (err.code === 'unimplemented') {
-        console.warn('Firestore persistence not supported in this browser');
-      }
-    });
-  } catch (e) {
-    // Ignore in non-browser environments
+    return initializeFirestore(
+      app,
+      {
+        ignoreUndefinedProperties: true,
+      },
+      dbId || undefined
+    );
+  } catch {
+    return dbId ? getFirestore(app, dbId) : getFirestore(app);
   }
+})();
+
+/**
+ * Hàm loại bỏ triệt để các giá trị undefined trước khi ghi lên Firestore
+ */
+export function cleanFirestoreDoc<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return '' as any;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => cleanFirestoreDoc(item)) as any;
+  }
+  if (typeof obj === 'object') {
+    const res: any = {};
+    for (const [key, value] of Object.entries(obj as any)) {
+      if (value !== undefined) {
+        res[key] = cleanFirestoreDoc(value);
+      }
+    }
+    return res;
+  }
+  return obj;
+}
+
+export const FIRESTORE_CONSOLE_URL = `https://console.firebase.google.com/project/${(firebaseConfig as any).projectId}/firestore/databases/${(firebaseConfig as any).firestoreDatabaseId}/data?openUpgradeDialog=true`;
+
+export interface FirestoreTestResult {
+  connected: boolean;
+  isQuotaExceeded: boolean;
+  errorMessage?: string;
 }
 
 // Test connection to Firestore
-export async function testFirestoreConnection(): Promise<boolean> {
+export async function testFirestoreConnection(): Promise<FirestoreTestResult> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
-    return true;
-  } catch (error) {
-    console.log('Firestore initial ping:', error);
-    // Even if test doc doesn't exist, if we reach server or it initializes it's online
-    return true;
+    return { connected: true, isQuotaExceeded: false };
+  } catch (error: any) {
+    const msg = error?.message || String(error);
+    const code = error?.code || '';
+    const isQuota =
+      msg.includes('Quota limit exceeded') ||
+      msg.includes('Quota exceeded') ||
+      msg.includes('resource-exhausted') ||
+      code === 'resource-exhausted';
+    console.log('Firestore connection check:', { isQuota, code, message: msg });
+    return {
+      connected: false,
+      isQuotaExceeded: isQuota,
+      errorMessage: msg,
+    };
   }
 }
 
@@ -88,18 +126,30 @@ export async function saveSecureWorkerDocument(
 ): Promise<boolean> {
   try {
     const nowIso = new Date().toISOString();
+
+    // Nén ảnh bảo đảm kích thước an toàn < 200KB cho Cloud Firestore
+    let compressedFront = frontImage || '';
+    let compressedBack = backImage || '';
+
+    if (compressedFront && compressedFront.startsWith('data:image')) {
+      compressedFront = await compressImageBase64(compressedFront, 1200, 0.75);
+    }
+    if (compressedBack && compressedBack.startsWith('data:image')) {
+      compressedBack = await compressImageBase64(compressedBack, 1200, 0.75);
+    }
+
     const docData: SecureWorkerDocument = {
       workerId,
-      frontImage: frontImage || '',
-      backImage: backImage || '',
+      frontImage: compressedFront,
+      backImage: compressedBack,
       storagePath: `worker_documents/${workerId}/`,
       updatedAt: nowIso,
       updatedBy: operatorName,
     };
-    await setDoc(doc(db, 'worker_documents', workerId), docData);
+    await setDoc(doc(db, 'worker_documents', workerId), cleanFirestoreDoc(docData));
     return true;
   } catch (err) {
-    console.error('Error saving secure worker document:', err);
+    console.warn('Error saving secure worker document:', err);
     return false;
   }
 }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, FileDown, FileSpreadsheet, Building, DoorOpen, CheckCircle } from 'lucide-react';
-import { Worker } from '../../types';
+import { Worker, AuditItemRecord } from '../../types';
 import { useDorm } from '../../context/DormContext';
 import { exportWorkersToExcel } from '../../utils/helpers';
 
@@ -15,7 +15,7 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
   onClose,
   onSuccessToast,
 }) => {
-  const { workers, config, manager } = useDorm();
+  const { workers, config, manager, addAuditLog } = useDorm();
 
   const [exportScope, setExportScope] = useState<'ALL' | 'ACTIVE_ONLY' | 'BY_DORM' | 'BY_ROOM'>('ALL');
   const [selectedDorm, setSelectedDorm] = useState<number>(1);
@@ -23,27 +23,63 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleExport = () => {
+  const handleExport = async () => {
     let targetWorkers: Worker[] = [];
     let scopeName = 'Toan_Bo';
+    let scopeDesc = 'Toàn bộ danh sách KTX';
 
     if (exportScope === 'ALL') {
       targetWorkers = workers;
       scopeName = 'Tat_Ca';
+      scopeDesc = 'Toàn bộ danh sách KTX';
     } else if (exportScope === 'ACTIVE_ONLY') {
       targetWorkers = workers.filter((w) => w.status === 'Đang ở');
       scopeName = 'Dang_O';
+      scopeDesc = 'Công nhân đang ở';
     } else if (exportScope === 'BY_DORM') {
       targetWorkers = workers.filter((w) => w.dorm === selectedDorm);
       scopeName = `Day_${selectedDorm}`;
+      scopeDesc = `Dãy ${selectedDorm}`;
     } else if (exportScope === 'BY_ROOM') {
       targetWorkers = workers.filter((w) => w.dorm === selectedDorm && w.room === selectedRoom);
       scopeName = `Day_${selectedDorm}_Phong_${selectedRoom}`;
+      scopeDesc = `Dãy ${selectedDorm} - Phòng ${selectedRoom}`;
     }
 
     const fileName = `Danh_Sach_KTX_${scopeName}_${new Date().toISOString().split('T')[0]}.xlsx`;
 
     exportWorkersToExcel(targetWorkers, config, fileName);
+
+    const exportItems: AuditItemRecord[] = targetWorkers.map((w) => ({
+      empCode: w.empCode,
+      name: w.name,
+      dorm: w.dorm,
+      room: w.room,
+      bed: w.bed,
+      status: w.status,
+      actionType: 'Xuất file',
+      phone: w.phone,
+      cccd: w.cccd,
+      workplace: w.workplace,
+      gender: w.gender,
+      entryDate: w.entryDate,
+    }));
+
+    try {
+      await addAuditLog(
+        'EXPORT_EXCEL',
+        `Xuất file Excel "${fileName}": ${targetWorkers.length} công nhân (Phạm vi: ${scopeDesc})`,
+        {
+          fileName,
+          scope: scopeDesc,
+          totalCount: targetWorkers.length,
+          items: exportItems,
+        }
+      );
+    } catch (e) {
+      console.warn('Lỗi ghi audit log xuất Excel:', e);
+    }
+
     onSuccessToast(`Đã xuất thành công file Excel: ${fileName} (${targetWorkers.length} dòng, 2 Sheet)!`);
     onClose();
   };
@@ -95,7 +131,7 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
                 />
                 <div>
                   <span className="font-bold text-slate-900 dark:text-white">Toàn bộ hồ sơ</span>
-                  <p className="text-slate-500">Tất cả {workers.length} công nhân (gồm Đang ở & Đã rời KTX)</p>
+                  <p className="text-slate-500">Tất cả {workers.length} công nhân (gồm Đang ở & Đã check out)</p>
                 </div>
               </label>
 

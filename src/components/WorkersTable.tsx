@@ -6,7 +6,6 @@ import {
   ArrowDown,
   Edit2,
   Trash2,
-  Image as ImageIcon,
   UserPlus,
   FileDown,
   FileUp,
@@ -22,8 +21,9 @@ import {
 } from 'lucide-react';
 import { Worker, WorkerStatus } from '../types';
 import { useDorm } from '../context/DormContext';
-import { formatDateDisplay, formatDateTimeDisplay } from '../utils/helpers';
+import { formatDateDisplay, formatDateTimeDisplay, getCccdPhotoStatus, getTodayStr } from '../utils/helpers';
 import { matchesVietnameseSearch } from '../utils/vietnamese';
+import { CccdStatusIcon } from './CccdStatusIcon';
 
 interface WorkersTableProps {
   selectedDormFilter?: number | null;
@@ -70,8 +70,23 @@ export const WorkersTable: React.FC<WorkersTableProps> = ({
   const [dormFilter, setDormFilter] = useState<string>(selectedDormFilter ? String(selectedDormFilter) : 'ALL');
   const [roomFilter, setRoomFilter] = useState<string>(selectedRoomFilter ? String(selectedRoomFilter) : 'ALL');
   const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
+  const [cccdFilter, setCccdFilter] = useState<'ALL' | 'FULL' | 'PARTIAL' | 'MISSING'>('ALL');
   const [onlyEnteredToday, setOnlyEnteredToday] = useState(initialEnteredToday);
   const [onlyExitedToday, setOnlyExitedToday] = useState(initialExitedToday);
+
+  // Thống kê nhanh trạng thái ảnh CCCD
+  const cccdStats = useMemo(() => {
+    let full = 0;
+    let partial = 0;
+    let missing = 0;
+    for (const w of workers) {
+      const st = getCccdPhotoStatus(w).status;
+      if (st === 'full') full++;
+      else if (st === 'partial') partial++;
+      else missing++;
+    }
+    return { full, partial, missing };
+  }, [workers]);
 
   // Sorting State
   const [sortField, setSortField] = useState<SortField>('updatedAt');
@@ -102,7 +117,7 @@ export const WorkersTable: React.FC<WorkersTableProps> = ({
 
   // Filtered and Sorted Workers
   const filteredWorkers = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayStr();
 
     return workers.filter((worker) => {
       // Search term filter (accent-insensitive)
@@ -130,8 +145,18 @@ export const WorkersTable: React.FC<WorkersTableProps> = ({
       }
 
       // Status filter
-      if (statusFilter !== 'ALL' && worker.status !== statusFilter) {
-        return false;
+      if (statusFilter !== 'ALL') {
+        if (statusFilter === 'Đang ở' && worker.status !== 'Đang ở') return false;
+        if (statusFilter === 'Đã check out' && worker.status !== 'Đã check out' && (worker.status as any) !== 'Đã rời KTX') return false;
+        if (statusFilter !== 'Đang ở' && statusFilter !== 'Đã check out' && worker.status !== statusFilter) return false;
+      }
+
+      // CCCD Photo status filter
+      if (cccdFilter !== 'ALL') {
+        const photoSt = getCccdPhotoStatus(worker).status;
+        if (cccdFilter === 'FULL' && photoSt !== 'full') return false;
+        if (cccdFilter === 'PARTIAL' && photoSt !== 'partial') return false;
+        if (cccdFilter === 'MISSING' && photoSt !== 'missing') return false;
       }
 
       // Entered today
@@ -146,7 +171,7 @@ export const WorkersTable: React.FC<WorkersTableProps> = ({
 
       return true;
     });
-  }, [workers, searchTerm, dormFilter, roomFilter, statusFilter, onlyEnteredToday, onlyExitedToday]);
+  }, [workers, searchTerm, dormFilter, roomFilter, statusFilter, cccdFilter, onlyEnteredToday, onlyExitedToday]);
 
   // Sort logic
   const sortedWorkers = useMemo(() => {
@@ -360,10 +385,103 @@ export const WorkersTable: React.FC<WorkersTableProps> = ({
             >
               <option value="ALL">Tất cả Trạng thái</option>
               <option value="Đang ở">Đang ở</option>
-              <option value="Đã rời KTX">Đã rời KTX</option>
+              <option value="Đã check out">Đã check out</option>
             </select>
           </div>
 
+          {/* CCCD Photo Filter */}
+          <div>
+            <select
+              value={cccdFilter}
+              onChange={(e) => {
+                setCccdFilter(e.target.value as 'ALL' | 'FULL' | 'PARTIAL' | 'MISSING');
+                setCurrentPage(1);
+              }}
+              className="w-full py-1.5 px-2.5 text-xs sm:text-sm rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+            >
+              <option value="ALL">Tất cả ảnh CCCD</option>
+              <option value="FULL">🟢 Đủ 2 mặt ({cccdStats.full})</option>
+              <option value="PARTIAL">🔵 Có 1 mặt ({cccdStats.partial})</option>
+              <option value="MISSING">🟡 Thiếu cả 2 mặt ({cccdStats.missing})</option>
+            </select>
+          </div>
+
+        </div>
+
+        {/* CCCD Photo Status Quick Legend & Filter Pills */}
+        <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-slate-500 dark:text-slate-400 font-medium text-[11px] sm:text-xs">
+              Cảnh báo ảnh CCCD:
+            </span>
+
+            <button
+              type="button"
+              onClick={() => {
+                setCccdFilter((prev) => (prev === 'FULL' ? 'ALL' : 'FULL'));
+                setCurrentPage(1);
+              }}
+              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer ${
+                cccdFilter === 'FULL'
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                  : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-300/80 dark:border-emerald-700 hover:bg-emerald-100'
+              }`}
+              title="Nhấn để lọc người ĐỦ 2 MẶT ảnh CCCD (Màu xanh lá)"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-500 ring-1 ring-white dark:ring-slate-900" />
+              <span>Đủ 2 mặt (Xanh lá):</span>
+              <span className="font-bold">{cccdStats.full}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setCccdFilter((prev) => (prev === 'PARTIAL' ? 'ALL' : 'PARTIAL'));
+                setCurrentPage(1);
+              }}
+              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer ${
+                cccdFilter === 'PARTIAL'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                  : 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border-blue-300/80 dark:border-blue-700 hover:bg-blue-100'
+              }`}
+              title="Nhấn để lọc người CÓ 1 MẶT ảnh CCCD (Màu xanh dương)"
+            >
+              <span className="w-2 h-2 rounded-full bg-blue-500 ring-1 ring-white dark:ring-slate-900" />
+              <span>Có 1 mặt (Xanh dương):</span>
+              <span className="font-bold">{cccdStats.partial}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setCccdFilter((prev) => (prev === 'MISSING' ? 'ALL' : 'MISSING'));
+                setCurrentPage(1);
+              }}
+              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer ${
+                cccdFilter === 'MISSING'
+                  ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                  : 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300/80 dark:border-amber-700 hover:bg-amber-100'
+              }`}
+              title="Nhấn để lọc người THIẾU CẢ 2 MẶT ảnh CCCD (Màu vàng)"
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-500 ring-1 ring-white dark:ring-slate-900" />
+              <span>Thiếu 2 mặt (Vàng):</span>
+              <span className="font-bold">{cccdStats.missing}</span>
+            </button>
+
+            {cccdFilter !== 'ALL' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCccdFilter('ALL');
+                  setCurrentPage(1);
+                }}
+                className="text-[11px] text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 underline underline-offset-2 ml-1 cursor-pointer font-medium"
+              >
+                Xóa bộ lọc
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -492,19 +610,7 @@ export const WorkersTable: React.FC<WorkersTableProps> = ({
 
                     {/* Họ và tên */}
                     <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
-                      <div className="flex items-center gap-2">
-                        <span>{worker.name}</span>
-                        {(worker.cccdFrontImage || worker.cccdBackImage) && (
-                          <button
-                            type="button"
-                            onClick={() => onViewCccd(worker)}
-                            className="text-blue-500 hover:text-blue-700"
-                            title="Có ảnh CCCD"
-                          >
-                            <ImageIcon className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
+                      <span>{worker.name}</span>
                     </td>
 
                     {/* Dãy */}
@@ -534,13 +640,13 @@ export const WorkersTable: React.FC<WorkersTableProps> = ({
                     {/* Trạng thái */}
                     <td className="py-3 px-3 text-center">
                       <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
                           isActive
                             ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
-                            : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                            : 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60'
                         }`}
                       >
-                        {worker.status}
+                        {isActive ? 'Đang ở' : 'Đã check out'}
                       </span>
                     </td>
 
@@ -580,14 +686,11 @@ export const WorkersTable: React.FC<WorkersTableProps> = ({
                     {/* Thao tác */}
                     <td className="py-3 px-3 text-center">
                       <div className="flex items-center justify-center gap-1.5">
-                        <button
-                          type="button"
+                        <CccdStatusIcon
+                          worker={worker}
                           onClick={() => onViewCccd(worker)}
-                          className="p-1.5 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md transition-colors"
-                          title="Xem / chụp ảnh CCCD"
-                        >
-                          <ImageIcon className="w-4 h-4" />
-                        </button>
+                          size="sm"
+                        />
 
                         {canEdit && (
                           <button

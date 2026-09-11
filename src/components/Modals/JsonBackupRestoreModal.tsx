@@ -13,6 +13,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { useDorm } from '../../context/DormContext';
+import { extractRecordsFromBackup } from '../../utils/jsonBackup';
 
 interface JsonBackupRestoreModalProps {
   isOpen: boolean;
@@ -64,28 +65,45 @@ export const JsonBackupRestoreModal: React.FC<JsonBackupRestoreModalProps> = ({
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const parsed = JSON.parse(event.target?.result as string);
-        if (!parsed.workers || !Array.isArray(parsed.workers)) {
-          throw new Error('File JSON không đúng cấu trúc sao lưu của hệ thống KTX');
+        const text = event.target?.result as string;
+        let parsed: any;
+        try {
+          parsed = JSON.parse(text);
+        } catch (jsonErr: any) {
+          throw new Error('File không hợp lệ. Vui lòng chọn file JSON backup của hệ thống.');
         }
-        setConfirmOverwriteModal({ backupData: parsed, fileName: file.name });
+
+        const records = extractRecordsFromBackup(parsed);
+        if (!records || records.length === 0) {
+          throw new Error('Không tìm thấy dữ liệu công nhân trong file JSON.');
+        }
+
+        // Store parsed format with normalized records
+        setConfirmOverwriteModal({
+          backupData: Array.isArray(parsed) ? records : { ...parsed, workers: records },
+          fileName: file.name,
+        });
       } catch (err: any) {
-        onErrorToast('Lỗi đọc file JSON: ' + (err.message || 'Dữ liệu không hợp lệ'));
+        onErrorToast(err.message || 'Lỗi đọc file JSON');
       }
     };
     reader.readAsText(file);
     e.target.value = '';
   };
 
-  const handleConfirmRestore = () => {
+  const handleConfirmRestore = async () => {
     if (!confirmOverwriteModal) return;
-    const res = restoreData(confirmOverwriteModal.backupData, true);
-    if (res.success) {
-      onSuccessToast(res.message);
-      setConfirmOverwriteModal(null);
-      onClose();
-    } else {
-      onErrorToast(res.message);
+    try {
+      const res = await restoreData(confirmOverwriteModal.backupData, true, confirmOverwriteModal.fileName);
+      if (res.success) {
+        onSuccessToast(res.message);
+        setConfirmOverwriteModal(null);
+        onClose();
+      } else {
+        onErrorToast(res.message);
+      }
+    } catch (err: any) {
+      onErrorToast('Lỗi khi phục hồi dữ liệu: ' + (err.message || ''));
     }
   };
 
@@ -110,7 +128,7 @@ export const JsonBackupRestoreModal: React.FC<JsonBackupRestoreModalProps> = ({
       return;
     }
 
-    const res = mergeJsonData(parsedList, 'keep_existing');
+    const res = await mergeJsonData(parsedList, 'keep_existing');
     if (res.success) {
       onSuccessToast(`Đã ghép thành công ${parsedList.length} file JSON! Thêm mới: ${res.addedCount}, Cập nhật: ${res.updatedCount}`);
       onClose();
@@ -320,7 +338,7 @@ export const JsonBackupRestoreModal: React.FC<JsonBackupRestoreModalProps> = ({
 
               <p className="text-xs text-slate-600 dark:text-slate-300">
                 Bạn đang chuẩn bị phục hồi từ file <strong>{confirmOverwriteModal.fileName}</strong>{' '}
-                chứa <strong>{confirmOverwriteModal.backupData.workers?.length || 0}</strong> công nhân.
+                chứa <strong>{Array.isArray(confirmOverwriteModal.backupData) ? confirmOverwriteModal.backupData.length : (confirmOverwriteModal.backupData.workers?.length || 0)}</strong> hồ sơ công nhân.
               </p>
 
               <div className="p-3 bg-rose-50 dark:bg-rose-950/40 rounded-lg text-xs text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">

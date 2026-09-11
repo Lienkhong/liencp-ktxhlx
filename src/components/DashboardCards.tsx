@@ -15,13 +15,17 @@ import {
   TrendingUp,
   UserMinus,
   Sparkles,
+  LogOut,
+  Info,
 } from 'lucide-react';
 import { useDorm } from '../context/DormContext';
+import { CloudDiagnosticModal } from './Modals/CloudDiagnosticModal';
 
 interface DashboardCardsProps {
   onFilterActive: () => void;
   onFilterTodayEntered: () => void;
   onFilterTodayExited?: () => void;
+  onOpenCheckedOutWorkers?: () => void;
   onOpenTeamLeaders: () => void;
   onOpenActiveRooms: () => void;
 }
@@ -30,11 +34,14 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   onFilterActive,
   onFilterTodayEntered,
   onFilterTodayExited,
+  onOpenCheckedOutWorkers,
   onOpenTeamLeaders,
   onOpenActiveRooms,
 }) => {
   const {
     workers,
+    checkedOutWorkers,
+    getTotalCheckedOutCount,
     getTotalOccupants,
     getTodayEntriesCount,
     getTodayExitsCount,
@@ -47,9 +54,12 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
     forceSyncNow,
   } = useDorm();
 
+  const [isDiagnosticOpen, setIsDiagnosticOpen] = React.useState(false);
+
   const totalAllWorkers = workers.length;
   const totalOccupants = getTotalOccupants();
-  const totalExited = totalAllWorkers - totalOccupants;
+  const totalCheckedOut = getTotalCheckedOutCount ? getTotalCheckedOutCount() : checkedOutWorkers.length;
+  const totalExited = totalCheckedOut;
   const todayEntered = getTodayEntriesCount();
   const todayExited = getTodayExitsCount();
   const totalTeamLeaders = getTeamLeadersCount();
@@ -101,8 +111,11 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
             {syncStatus === 'syncing' && (
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500 animate-spin"></span>
             )}
+            {syncStatus === 'quota_exceeded' && (
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500 animate-pulse"></span>
+            )}
             {(!isOnline || syncStatus === 'offline') && (
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-500"></span>
             )}
             {syncStatus === 'error' && (
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
@@ -127,9 +140,15 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
                 Đang đồng bộ dữ liệu...
               </span>
             )}
+            {syncStatus === 'quota_exceeded' && (
+              <span className="font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                Đạt hạn ngạch miễn phí hàng ngày (Dữ liệu an toàn trên máy)
+              </span>
+            )}
             {(!isOnline || syncStatus === 'offline') && (
-              <span className="font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
-                <WifiOff className="w-3.5 h-3.5" /> Không có kết nối mạng (Đang chạy Offline)
+              <span className="font-semibold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                <WifiOff className="w-3.5 h-3.5" /> Ngoại tuyến (Offline - Dữ liệu an toàn)
               </span>
             )}
             {syncStatus === 'error' && (
@@ -148,6 +167,20 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
+            onClick={() => setIsDiagnosticOpen(true)}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md border transition-colors shadow-2xs ${
+              syncStatus === 'quota_exceeded'
+                ? 'bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700 hover:bg-amber-200'
+                : 'text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 border-slate-200 dark:border-slate-600'
+            }`}
+            title="Xem chi tiết chẩn đoán Cloud Database và hướng dẫn xử lý"
+          >
+            <Info className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+            <span>Chẩn đoán Cloud</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => forceSyncNow()}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 rounded-md border border-slate-200 dark:border-slate-600 transition-colors shadow-2xs"
             title="Đồng bộ lại dữ liệu từ Cloud Database"
@@ -159,7 +192,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
       </div>
 
       {/* Primary KPI Metrics Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 sm:gap-5">
         
         {/* 1. Tổng công nhân đang ở */}
         <div
@@ -188,7 +221,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
 
           <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
             <span>Tổng hồ sơ: <strong>{totalAllWorkers}</strong></span>
-            <span>Đã rời KTX: <strong>{totalExited}</strong></span>
+            <span>Đã check out: <strong>{totalCheckedOut}</strong></span>
           </div>
 
           <div className="mt-3 flex items-center justify-between text-xs text-blue-600 dark:text-blue-400 font-medium pt-3 border-t border-slate-100 dark:border-slate-700/60">
@@ -197,7 +230,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
           </div>
         </div>
 
-        {/* 2. Biến động hôm nay (Vào / Rời) */}
+        {/* 2. Biến động hôm nay (Vào KTX hôm nay) */}
         <div
           id="card-stat-today-entered"
           onClick={onFilterTodayEntered}
@@ -221,12 +254,46 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
           </div>
 
           <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-            <span>Rời KTX hôm nay: <strong className="text-rose-600 dark:text-rose-400">{todayExited}</strong></span>
+            <span>Check out hôm nay: <strong className="text-rose-600 dark:text-rose-400">{todayExited}</strong></span>
             <span>Chênh lệch: <strong className={todayEntered - todayExited >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{todayEntered - todayExited >= 0 ? `+${todayEntered - todayExited}` : todayEntered - todayExited}</strong></span>
           </div>
 
           <div className="mt-3 flex items-center justify-between text-xs text-emerald-600 dark:text-emerald-400 font-medium pt-3 border-t border-slate-100 dark:border-slate-700/60">
             <span>Xem công nhân vào hôm nay</span>
+            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+          </div>
+        </div>
+
+        {/* 3. Danh sách công nhân Đã check out khỏi KTX */}
+        <div
+          id="card-stat-checked-out"
+          onClick={onOpenCheckedOutWorkers}
+          className="group relative bg-white dark:bg-slate-800 rounded-xl p-5 border border-slate-200/80 dark:border-slate-700/80 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer overflow-hidden hover:border-rose-300 dark:hover:border-rose-600"
+        >
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Đã check out khỏi KTX
+              </span>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-3xl font-extrabold text-rose-600 dark:text-rose-400">
+                  {totalCheckedOut}
+                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">hồ sơ lưu</span>
+              </div>
+            </div>
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 rounded-lg group-hover:scale-110 transition-transform">
+              <LogOut className="w-6 h-6" />
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+            <span>Hôm nay: <strong className="text-rose-600 dark:text-rose-400">+{todayExited}</strong></span>
+            <span>Tổng check out: <strong>{totalCheckedOut}</strong></span>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between text-xs text-rose-600 dark:text-rose-400 font-medium pt-3 border-t border-slate-100 dark:border-slate-700/60">
+            <span>Xem danh sách check out</span>
             <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
           </div>
         </div>
@@ -302,6 +369,11 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
         </div>
 
       </div>
+
+      <CloudDiagnosticModal
+        isOpen={isDiagnosticOpen}
+        onClose={() => setIsDiagnosticOpen(false)}
+      />
     </div>
   );
 };

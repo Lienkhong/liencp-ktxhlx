@@ -13,10 +13,20 @@ import {
   Sparkles,
   Trash2,
   Lock,
+  Loader2,
 } from 'lucide-react';
 import { Worker, WorkerStatus } from '../../types';
 import { useDorm } from '../../context/DormContext';
-import { normalizeCccdNumber, normalizePersonName, normalizeDateInput, maskCccdNumber } from '../../utils/helpers';
+import {
+  normalizeCccdNumber,
+  normalizePersonName,
+  normalizeDateInput,
+  maskCccdNumber,
+  formatToDmy,
+  formatDateInputMask,
+  simplifyAddress,
+  compressImageBase64,
+} from '../../utils/helpers';
 import { CccdScanModal } from './CccdScanModal';
 
 interface AddEditWorkerModalProps {
@@ -48,7 +58,7 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
     currentUser,
   } = useDorm();
 
-  const isEditing = Boolean(workerToEdit);
+  const isEditing = Boolean(workerToEdit && workerToEdit.id);
 
   // Form State - all fields are optional
   const [name, setName] = useState('');
@@ -73,15 +83,18 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
 
   const frontInputRef = useRef<HTMLInputElement | null>(null);
   const backInputRef = useRef<HTMLInputElement | null>(null);
+  const frontCameraRef = useRef<HTMLInputElement | null>(null);
+  const backCameraRef = useRef<HTMLInputElement | null>(null);
 
   // Overwrite confirmation modal state
   const [duplicateConflictWorker, setDuplicateConflictWorker] = useState<Worker | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Initialize or populate form
   useEffect(() => {
     if (workerToEdit) {
       setName(workerToEdit.name || '');
-      setDob(workerToEdit.dob || '');
+      setDob(workerToEdit.dob ? formatToDmy(workerToEdit.dob) : '');
       setEmpCode(workerToEdit.empCode || '');
       setCccd(workerToEdit.cccd || '');
       setPhone(workerToEdit.phone || '');
@@ -91,7 +104,8 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
       setRoom(workerToEdit.room || 1);
       setBed(workerToEdit.bed || 1);
       setTeamLeader(workerToEdit.teamLeader || '');
-      setStatus(workerToEdit.status || 'Đang ở');
+      const initialStatus = (workerToEdit.status as any) === 'Đã rời KTX' ? 'Đã check out' : (workerToEdit.status || 'Đang ở');
+      setStatus(initialStatus);
       setCccdFrontImage(workerToEdit.cccdFrontImage);
       setCccdBackImage(workerToEdit.cccdBackImage);
 
@@ -138,13 +152,14 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       if (event.target?.result) {
-        const base64 = event.target.result as string;
+        const rawBase64 = event.target.result as string;
+        const compressed = await compressImageBase64(rawBase64, 1200, 0.75);
         if (side === 'front') {
-          setCccdFrontImage(base64);
+          setCccdFrontImage(compressed);
         } else {
-          setCccdBackImage(base64);
+          setCccdBackImage(compressed);
         }
       }
     };
@@ -158,100 +173,123 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
     address?: string;
     frontImage?: string;
     backImage?: string;
+    dorm?: number;
+    room?: number;
+    bed?: number;
+    teamLeader?: string;
+    empCode?: string;
+    phone?: string;
   }) => {
     if (extractedData.name) setName(extractedData.name);
     if (extractedData.cccd) setCccd(extractedData.cccd);
-    if (extractedData.dob) setDob(extractedData.dob);
-    if (extractedData.address) setAddress(extractedData.address);
+    if (extractedData.dob) setDob(formatToDmy(extractedData.dob));
+    if (extractedData.address) setAddress(simplifyAddress(extractedData.address));
     if (extractedData.frontImage) setCccdFrontImage(extractedData.frontImage);
     if (extractedData.backImage) setCccdBackImage(extractedData.backImage);
+    if (extractedData.dorm) setDorm(extractedData.dorm);
+    if (extractedData.room) setRoom(extractedData.room);
+    if (extractedData.bed) setBed(extractedData.bed);
+    if (extractedData.teamLeader && !teamLeader) setTeamLeader(extractedData.teamLeader);
+    if (extractedData.empCode && !empCode) setEmpCode(extractedData.empCode);
+    if (extractedData.phone && !phone) setPhone(extractedData.phone);
     onSuccessToast('Đã trích xuất và điền thông tin từ CCCD thành công!');
   };
 
   const handleSubmit = async (e?: React.FormEvent, forceOverwrite = false) => {
     if (e) e.preventDefault();
+    if (isSubmitting) return;
 
     // Clean inputs - all fields are optional
     const cleanName = name.trim() ? normalizePersonName(name) : (workerToEdit ? workerToEdit.name : 'Công nhân mới');
     const autoCode = `NV${Math.floor(1000 + Math.random() * 9000)}`;
-    const cleanEmpCode = empCode.trim() ? empCode.trim().toUpperCase() : (workerToEdit ? workerToEdit.empCode : autoCode);
+    const cleanEmpCode = empCode.trim() 
+      ? empCode.trim().toUpperCase() 
+      : (workerToEdit?.empCode?.trim() ? workerToEdit.empCode.trim().toUpperCase() : autoCode);
     const cleanCccd = cccd.trim() ? normalizeCccdNumber(cccd) : '';
 
-    if (isEditing && workerToEdit) {
-      const res = await updateWorker(workerToEdit.id, {
-        name: cleanName,
-        dob: dob ? normalizeDateInput(dob) : '',
-        empCode: cleanEmpCode,
-        cccd: cleanCccd,
-        phone: phone.trim(),
-        address: address.trim(),
-        note: note.trim(),
-        dorm,
-        room,
-        bed,
-        teamLeader: teamLeader.trim(),
-        status,
-        cccdFrontImage,
-        cccdBackImage,
-      });
-
-      if (res.success) {
-        onSuccessToast(res.message);
-        onClose();
-      } else {
-        onErrorToast(res.message);
-      }
-    } else {
-      // Add worker
-      const res = await addWorker(
-        {
+    setIsSubmitting(true);
+    try {
+      if (isEditing && workerToEdit && workerToEdit.id) {
+        const res = await updateWorker(workerToEdit.id, {
           name: cleanName,
           dob: dob ? normalizeDateInput(dob) : '',
           empCode: cleanEmpCode,
           cccd: cleanCccd,
           phone: phone.trim(),
-          address: address.trim(),
+          address: address.trim() ? simplifyAddress(address) : '',
           note: note.trim(),
           dorm,
           room,
           bed,
           teamLeader: teamLeader.trim(),
           status,
-          entryDate: '',
-          exitDate: '',
           cccdFrontImage,
           cccdBackImage,
-        },
-        forceOverwrite
-      );
+        });
 
-      if (res.success) {
-        onSuccessToast(res.message);
-        onClose();
-      } else if (res.duplicateWorker) {
-        setDuplicateConflictWorker(res.duplicateWorker);
+        if (res.success) {
+          onSuccessToast(res.message);
+          onClose();
+        } else {
+          onErrorToast(res.message);
+        }
       } else {
-        onErrorToast(res.message);
+        // Add worker
+        const res = await addWorker(
+          {
+            name: cleanName,
+            dob: dob ? normalizeDateInput(dob) : '',
+            empCode: cleanEmpCode,
+            cccd: cleanCccd,
+            phone: phone.trim(),
+            address: address.trim() ? simplifyAddress(address) : '',
+            note: note.trim(),
+            dorm,
+            room,
+            bed,
+            teamLeader: teamLeader.trim(),
+            status,
+            entryDate: '',
+            exitDate: '',
+            cccdFrontImage,
+            cccdBackImage,
+          },
+          forceOverwrite
+        );
+
+        if (res.success) {
+          onSuccessToast(res.message);
+          onClose();
+        } else if (res.duplicateWorker) {
+          setDuplicateConflictWorker(res.duplicateWorker);
+        } else {
+          onErrorToast(res.message);
+        }
       }
+    } catch (err: any) {
+      console.error('Error in handleSubmit:', err);
+      onErrorToast(`Lỗi lưu công nhân: ${err?.message || 'Không thể xử lý dữ liệu'}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
     <>
-      <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-        <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-150">
+      <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-2xl w-full max-h-[92vh] sm:max-h-[90vh] shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden my-auto flex flex-col animate-in fade-in zoom-in-95 duration-150">
           
           {/* Modal Header */}
-          <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+          <div className="shrink-0 px-5 sm:px-6 py-3.5 sm:py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
                 {isEditing ? <Save className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
               </div>
-              <div>
-                <h3 className="font-bold text-base sm:text-lg text-slate-900 dark:text-white">
+              <div className="min-w-0">
+                <h3 className="font-bold text-base sm:text-lg text-slate-900 dark:text-white truncate">
                   {isEditing ? `Cập nhật thông tin: ${workerToEdit?.name || 'Công nhân'}` : 'Thêm công nhân mới vào KTX'}
                 </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                   Tất cả thông tin đều không bắt buộc. Quản lý có thể chụp ảnh CCCD để AI tự động điền.
                 </p>
               </div>
@@ -259,43 +297,44 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0 ml-2 cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
 
-          {/* Quick OCR Scanner Trigger Banner */}
-          <div className="px-6 pt-4">
-            <div className="p-3.5 rounded-xl bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-blue-500/10 border border-blue-200 dark:border-blue-800 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-lg bg-blue-600 text-white shadow-sm">
-                  <Camera className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <span>Chụp ảnh & Trích xuất CCCD bằng AI</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white font-semibold">OCR Online</span>
+          {/* Modal Form */}
+          <form onSubmit={(e) => handleSubmit(e, false)} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            
+            {/* Scrollable Form Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+              
+              {/* Quick OCR Scanner Trigger Banner */}
+              <div className="p-3.5 rounded-xl bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-blue-500/10 border border-blue-200 dark:border-blue-800 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-blue-600 text-white shadow-sm">
+                    <Camera className="w-4 h-4" />
                   </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Chụp bằng camera điện thoại hoặc tải ảnh lên để tự động điền thông tin
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <span>Chụp ảnh & Trích xuất CCCD bằng AI</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white font-semibold">OCR Online</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Chụp bằng camera điện thoại hoặc tải ảnh lên để tự động điền thông tin
+                    </div>
                   </div>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsOcrModalOpen(true)}
+                  className="w-full sm:w-auto px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-all shrink-0 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Quét CCCD ngay</span>
+                </button>
               </div>
-
-              <button
-                type="button"
-                onClick={() => setIsOcrModalOpen(true)}
-                className="w-full sm:w-auto px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-all shrink-0"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Quét CCCD ngay</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Modal Form Body */}
-          <form onSubmit={(e) => handleSubmit(e, false)} className="p-6 space-y-5">
             
             {/* Section 1: Thông tin cá nhân */}
             <div>
@@ -335,15 +374,21 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
 
                 {/* Ngày sinh */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Ngày sinh (YYYY-MM-DD hoặc DD/MM/YYYY)
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                    <span>Ngày sinh (dd/mm/yyyy)</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Định dạng dd/mm/yyyy</span>
                   </label>
                   <input
                     type="text"
+                    inputMode="numeric"
+                    maxLength={10}
                     value={dob}
-                    onChange={(e) => setDob(e.target.value)}
-                    placeholder="Ví dụ: 1996-08-15 hoặc 15/08/1996"
-                    className="w-full px-3 py-2 text-sm rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    onChange={(e) => setDob(formatDateInputMask(e.target.value))}
+                    onBlur={() => {
+                      if (dob) setDob(formatToDmy(dob));
+                    }}
+                    placeholder="dd/mm/yyyy (ví dụ: 15/08/1996)"
+                    className="w-full px-3 py-2 text-sm font-mono rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
 
@@ -378,14 +423,18 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
 
                 {/* Nơi thường trú */}
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Nơi đăng ký hộ khẩu thường trú / Quê quán
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                    <span>Nơi thường trú (Xã/phường, Tỉnh)</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Chỉ nhập Xã/phường, Tỉnh</span>
                   </label>
                   <input
                     type="text"
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Ví dụ: Xã Phú Nghĩa, Huyện Chương Mỹ, TP Hà Nội"
+                    onBlur={() => {
+                      if (address) setAddress(simplifyAddress(address));
+                    }}
+                    placeholder="Ví dụ: Cẩm Phả, Quảng Ninh hoặc Quảng Trạch, Quảng Bình"
                     className="w-full px-3 py-2 text-sm rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -462,15 +511,33 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
                     onChange={(e) => handleFileUpload('front', e)}
                     className="hidden"
                   />
+                  <input
+                    type="file"
+                    ref={frontCameraRef}
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => handleFileUpload('front', e)}
+                    className="hidden"
+                  />
 
                   <div className="flex gap-2">
                     <button
                       type="button"
+                      onClick={() => frontCameraRef.current?.click()}
+                      className="flex-1 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors flex items-center justify-center gap-1 shadow-xs"
+                      title="Mở máy ảnh chụp trực tiếp"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>Chụp ảnh</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => frontInputRef.current?.click()}
                       className="flex-1 py-1.5 text-xs font-semibold rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors flex items-center justify-center gap-1"
+                      title="Tải tệp ảnh từ thiết bị"
                     >
                       <Upload className="w-3.5 h-3.5" />
-                      <span>{cccdFrontImage ? 'Đổi ảnh' : 'Tải ảnh lên'}</span>
+                      <span>{cccdFrontImage ? 'Đổi tệp' : 'Tải tệp'}</span>
                     </button>
                   </div>
                 </div>
@@ -517,15 +584,33 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
                     onChange={(e) => handleFileUpload('back', e)}
                     className="hidden"
                   />
+                  <input
+                    type="file"
+                    ref={backCameraRef}
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => handleFileUpload('back', e)}
+                    className="hidden"
+                  />
 
                   <div className="flex gap-2">
                     <button
                       type="button"
+                      onClick={() => backCameraRef.current?.click()}
+                      className="flex-1 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors flex items-center justify-center gap-1 shadow-xs"
+                      title="Mở máy ảnh chụp trực tiếp"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>Chụp ảnh</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => backInputRef.current?.click()}
                       className="flex-1 py-1.5 text-xs font-semibold rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors flex items-center justify-center gap-1"
+                      title="Tải tệp ảnh từ thiết bị"
                     >
                       <Upload className="w-3.5 h-3.5" />
-                      <span>{cccdBackImage ? 'Đổi ảnh' : 'Tải ảnh lên'}</span>
+                      <span>{cccdBackImage ? 'Đổi tệp' : 'Tải tệp'}</span>
                     </button>
                   </div>
                 </div>
@@ -543,38 +628,84 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
                 
                 {/* Dãy */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Dãy KTX
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                    <span>Dãy KTX</span>
+                    <span className="text-[10px] text-slate-400 font-normal">(1 - {config?.numDorms || 8})</span>
                   </label>
-                  <select
-                    value={dorm}
-                    onChange={(e) => setDorm(Number(e.target.value))}
-                    className="w-full px-3 py-2 text-sm rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-semibold"
-                  >
-                    {Array.from({ length: config.numDorms }, (_, i) => i + 1).map((d) => (
-                      <option key={d} value={d}>
-                        Dãy {d}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={dorm}
+                      onChange={(e) => setDorm(Number(e.target.value) || 1)}
+                      className="flex-1 px-3 py-2 text-sm rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-semibold"
+                    >
+                      {Array.from({ length: Math.max(config?.numDorms || 8, dorm || 1) }, (_, i) => i + 1).map((d) => (
+                        <option key={d} value={d}>
+                          Dãy {d}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={dorm || ''}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                        if (raw === '') {
+                          setDorm(0);
+                        } else {
+                          const val = parseInt(raw, 10);
+                          if (!isNaN(val)) setDorm(val);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (!dorm || dorm < 1) setDorm(1);
+                      }}
+                      placeholder="Số dãy"
+                      className="w-16 px-2 py-2 text-sm text-center font-bold rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                      title="Gõ trực tiếp số dãy KTX"
+                    />
+                  </div>
                 </div>
 
                 {/* Phòng */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Phòng
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                    <span>Phòng</span>
+                    <span className="text-[10px] text-slate-400 font-normal">(1 - {config?.roomsPerDorm || 20})</span>
                   </label>
-                  <select
-                    value={room}
-                    onChange={(e) => setRoom(Number(e.target.value))}
-                    className="w-full px-3 py-2 text-sm rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-semibold"
-                  >
-                    {Array.from({ length: config.roomsPerDorm }, (_, i) => i + 1).map((r) => (
-                      <option key={r} value={r}>
-                        Phòng {String(r).padStart(2, '0')}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex items-center gap-1.5 mt-5">
+                    <select
+                      value={room}
+                      onChange={(e) => setRoom(Number(e.target.value) || 1)}
+                      className="flex-1 px-3 py-2 text-sm rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-semibold"
+                    >
+                      {Array.from({ length: Math.max(config?.roomsPerDorm || 20, room || 1) }, (_, i) => i + 1).map((r) => (
+                        <option key={r} value={r}>
+                          Phòng {String(r).padStart(2, '0')}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={room || ''}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                        if (raw === '') {
+                          setRoom(0);
+                        } else {
+                          const val = parseInt(raw, 10);
+                          if (!isNaN(val)) setRoom(val);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (!room || room < 1) setRoom(1);
+                      }}
+                      placeholder="Số phòng"
+                      className="w-16 px-2 py-2 text-sm text-center font-bold rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                      title="Gõ trực tiếp số phòng KTX"
+                    />
+                  </div>
                 </div>
 
                 {/* Số giường */}
@@ -640,28 +771,40 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
                     }`}
                   >
                     <option value="Đang ở">Đang ở</option>
-                    <option value="Đã rời KTX">Đã rời KTX</option>
+                    <option value="Đã check out">Đã check out</option>
                   </select>
                 </div>
 
               </div>
             </div>
+            </div>
 
-            {/* Modal Actions */}
-            <div className="pt-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-3">
+            {/* Modal Actions (Fixed at bottom) */}
+            <div className="shrink-0 px-5 sm:px-6 py-3 sm:py-3.5 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-3 bg-slate-50 dark:bg-slate-900/50">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-sm font-medium rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 transition-colors"
+                disabled={isSubmitting}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 transition-colors disabled:opacity-50 cursor-pointer"
               >
                 Hủy
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 text-sm font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-md transition-all flex items-center gap-2"
+                disabled={isSubmitting}
+                className="px-5 py-2 text-sm font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-md transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
-                <CheckCircle className="w-4 h-4" />
-                <span>{isEditing ? 'Lưu thay đổi' : 'Lưu công nhân'}</span>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Đang lưu...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    <span>{isEditing ? 'Lưu thay đổi' : 'Lưu công nhân'}</span>
+                  </>
+                )}
               </button>
             </div>
 
@@ -725,8 +868,11 @@ export const AddEditWorkerModal: React.FC<AddEditWorkerModalProps> = ({
       <CccdScanModal
         isOpen={isOcrModalOpen}
         onClose={() => setIsOcrModalOpen(false)}
+        defaultDorm={dorm}
+        defaultRoom={room}
         onScanCompleted={handleOcrDataReceived}
         onErrorToast={onErrorToast}
+        onSuccessToast={onSuccessToast}
       />
     </>
   );

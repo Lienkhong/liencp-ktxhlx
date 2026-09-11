@@ -45,7 +45,8 @@ export const DormGrid: React.FC<DormGridProps> = ({ onSelectDorm }) => {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between pb-1 border-b border-slate-200 dark:border-slate-800">
         <div>
           <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <Building className="w-5 h-5 text-blue-600 dark:text-blue-400" />
@@ -57,7 +58,8 @@ export const DormGrid: React.FC<DormGridProps> = ({ onSelectDorm }) => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
+      {/* Grid format: 3 columns layout matching the image (Dãy 1..3, Dãy 4..6, Dãy 7..9, Dãy 10) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-3 gap-3.5 sm:gap-4">
         {dormCards.map((dorm) => (
           <div
             key={dorm.dormNum}
@@ -76,7 +78,7 @@ export const DormGrid: React.FC<DormGridProps> = ({ onSelectDorm }) => {
                     Dãy {dorm.dormNum}
                   </h3>
                 </div>
-                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${dorm.badgeColor}`}>
+                <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${dorm.badgeColor}`}>
                   {dorm.occupancyPercentage}% sức chứa
                 </span>
               </div>

@@ -13,7 +13,7 @@ export const EditManagerModal: React.FC<EditManagerModalProps> = ({
   onClose,
   onSuccessToast,
 }) => {
-  const { manager, updateManager } = useDorm();
+  const { manager, updateManager, updateManagerInfo } = useDorm();
   const [name, setName] = useState(manager.name);
   const [phone, setPhone] = useState(manager.phone || '');
 
@@ -27,7 +27,10 @@ export const EditManagerModal: React.FC<EditManagerModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    await updateManager({ name: name.trim(), phone: phone.trim() });
+    const updater = updateManager || updateManagerInfo;
+    if (typeof updater === 'function') {
+      await updater({ name: name.trim(), phone: phone.trim() });
+    }
     onSuccessToast('Đã cập nhật thông tin Quản lý Ký túc xá thành công!');
     onClose();
   };

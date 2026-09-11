@@ -1,0 +1,115 @@
+<svg viewBox="0 0 120 120" width="120" height="120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="lee-bubble-bg" x1="20" y1="10" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#ecfeff" />
+      <stop offset="100%" stopColor="#ccfbf1" />
+    </linearGradient>
+    <linearGradient id="lee-bubble-border" x1="10" y1="10" x2="110" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#2dd4bf" />
+      <stop offset="50%" stopColor="#14b8a6" />
+      <stop offset="100%" stopColor="#0d9488" />
+    </linearGradient>
+    <linearGradient id="lee-heart-grad" x1="55" y1="2" x2="65" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#ff4d6d" />
+      <stop offset="60%" stopColor="#e11d48" />
+      <stop offset="100%" stopColor="#be123c" />
+    </linearGradient>
+    <linearGradient id="lee-hair-grad" x1="40" y1="30" x2="80" y2="55" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#38bdf8" />
+      <stop offset="40%" stopColor="#2563eb" />
+      <stop offset="100%" stopColor="#1d4ed8" />
+    </linearGradient>
+    <linearGradient id="lee-helmet-rim" x1="30" y1="20" x2="90" y2="70" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#a5f3fc" />
+      <stop offset="60%" stopColor="#22d3ee" />
+      <stop offset="100%" stopColor="#0891b2" />
+    </linearGradient>
+    <linearGradient id="lee-suit-white" x1="45" y1="65" x2="75" y2="95" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#ffffff" />
+      <stop offset="100%" stopColor="#e2e8f0" />
+    </linearGradient>
+    <linearGradient id="lee-shield" x1="55" y1="72" x2="65" y2="84" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#34d399" />
+      <stop offset="100%" stopColor="#059669" />
+    </linearGradient>
+    <linearGradient id="lee-ai-badge-bg" x1="75" y1="75" x2="105" y2="105" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#2dd4bf" />
+      <stop offset="60%" stopColor="#0d9488" />
+      <stop offset="100%" stopColor="#0f766e" />
+    </linearGradient>
+  </defs>
+
+  <!-- Speech Bubble Base Frame -->
+  <path
+    d="M60 14 C33 14 14 31 14 55 C14 69 22 81 34 89 L32 104 C32 105 34 106 35 105 L48 95 C52 96 56 96 60 96 C87 96 106 79 106 55 C106 31 87 14 60 14 Z"
+    fill="url(#lee-bubble-bg)"
+    stroke="url(#lee-bubble-border)"
+    stroke-width="4"
+    stroke-linejoin="round"
+  />
+
+  <!-- Cape -->
+  <path d="M38 72 C33 76 30 84 32 90 C40 88 46 84 50 80 Z" fill="#06b6d4" opacity="0.9" />
+  <path d="M82 72 C87 76 90 84 88 90 C80 88 74 84 70 80 Z" fill="#0891b2" opacity="0.9" />
+
+  <!-- Waving Hand -->
+  <path d="M36 68 C30 63 26 55 31 51 C35 48 40 54 44 60 Z" fill="url(#lee-suit-white)" stroke="#cbd5e1" stroke-width="0.8" />
+  <ellipse cx="29" cy="51" rx="6" ry="5" fill="#22d3ee" transform="rotate(-20 29 51)" />
+  <circle cx="25" cy="48" r="2.2" fill="#22d3ee" />
+  <circle cx="27" cy="45" r="2.2" fill="#22d3ee" />
+  <circle cx="30" cy="45" r="2.2" fill="#22d3ee" />
+  <circle cx="33" cy="47" r="2" fill="#22d3ee" />
+
+  <!-- Suit Upper Body -->
+  <path d="M44 68 C44 64 52 63 60 63 C68 63 76 64 76 68 C78 78 76 92 60 92 C44 92 42 78 44 68 Z" fill="url(#lee-suit-white)" stroke="#cbd5e1" stroke-width="1" />
+  <path d="M48 64 C53 66 67 66 72 64 C70 68 50 68 48 64 Z" fill="#0891b2" />
+
+  <!-- Shield with Heartbeat -->
+  <g transform="translate(60, 78)">
+    <path d="M0 -7 C4 -7 7 -6 7 -3 C7 2 3 7 0 9 C-3 7 -7 2 -7 -3 C-7 -6 -4 -7 0 -7 Z" fill="url(#lee-shield)" stroke="#10b981" stroke-width="0.8" />
+    <path d="M-5 -2 L-2.5 -2 L-1 -5 L0.5 1 L1.8 -3 L3 -2 L5 -2" fill="none" stroke="#ffffff" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+
+  <!-- Right Arm -->
+  <path d="M75 66 C80 70 82 77 78 81 C75 83 73 78 72 73 Z" fill="url(#lee-suit-white)" />
+  <circle cx="78" cy="80" r="4.5" fill="#22d3ee" />
+
+  <!-- Helmet Wings -->
+  <path d="M33 46 C27 40 28 32 31 29 C34 33 34 38 38 41 Z" fill="#ffffff" stroke="#a5f3fc" stroke-width="1.2" />
+  <path d="M87 46 C93 40 92 32 89 29 C86 33 86 38 82 41 Z" fill="#ffffff" stroke="#a5f3fc" stroke-width="1.2" />
+
+  <!-- Helmet -->
+  <circle cx="60" cy="42" r="24" fill="#ffffff" stroke="url(#lee-helmet-rim)" stroke-width="4" />
+  <circle cx="60" cy="43" r="19" fill="#fff9f5" />
+
+  <!-- Hair -->
+  <path d="M42 38 C45 32 50 28 60 28 C70 28 75 32 78 38 C75 38 72 35 68 37 C64 39 62 44 60 41 C57 44 54 39 50 37 C47 36 44 38 42 38 Z" fill="url(#lee-hair-grad)" />
+
+  <!-- Eyes -->
+  <ellipse cx="52" cy="43" rx="4.5" ry="6" fill="#1e293b" />
+  <ellipse cx="52" cy="44" rx="4" ry="5.5" fill="#1d4ed8" />
+  <circle cx="51" cy="41" r="2.2" fill="#ffffff" />
+  <circle cx="53.5" cy="45.5" r="1.1" fill="#ffffff" />
+
+  <ellipse cx="68" cy="43" rx="4.5" ry="6" fill="#1e293b" />
+  <ellipse cx="68" cy="44" rx="4" ry="5.5" fill="#1d4ed8" />
+  <circle cx="67" cy="41" r="2.2" fill="#ffffff" />
+  <circle cx="69.5" cy="45.5" r="1.1" fill="#ffffff" />
+
+  <!-- Cheeks -->
+  <circle cx="47" cy="49" r="4" fill="#fb7185" opacity="0.65" />
+  <circle cx="73" cy="49" r="4" fill="#fb7185" opacity="0.65" />
+
+  <!-- Mouth -->
+  <path d="M57 49 C57 54 63 54 63 49 Z" fill="#e11d48" />
+  <path d="M58 51 C59 53 61 53 62 51 Z" fill="#fda4af" />
+
+  <!-- Floating Heart -->
+  <path d="M60 17 C59 15 54 9 51 13 C48 17 52 21 60 26 C68 21 72 17 69 13 C66 9 61 15 60 17 Z" fill="url(#lee-heart-grad)" />
+  <path d="M53 13 C53 11 56 11 58 13" stroke="#ffffff" stroke-width="1.2" stroke-linecap="round" opacity="0.85" />
+
+  <!-- AI Badge -->
+  <circle cx="88" cy="88" r="17" fill="#ffffff" />
+  <circle cx="88" cy="88" r="15" fill="url(#lee-ai-badge-bg)" stroke="#ffffff" stroke-width="2" />
+  <text x="88" y="94" text-anchor="middle" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="14">AI</text>
+</svg>

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { DormProvider, useDorm } from './context/DormContext';
+import { getTodayStr } from './utils/helpers';
 import { Header } from './components/Header';
 import { Breadcrumb } from './components/Breadcrumb';
 import { DashboardCards } from './components/DashboardCards';
@@ -28,6 +29,9 @@ import { EditManagerModal } from './components/Modals/EditManagerModal';
 import { ConfirmDeleteModal } from './components/Modals/ConfirmDeleteModal';
 import { LoginModal } from './components/Modals/LoginModal';
 import { ManagerLinksModal } from './components/Modals/ManagerLinksModal';
+import { AiAssistantModal } from './components/Modals/AiAssistantModal';
+import { CheckedOutWorkersModal } from './components/Modals/CheckedOutWorkersModal';
+import { LeeMascot } from './components/LeeMascot';
 
 import { Worker } from './types';
 import {
@@ -42,12 +46,16 @@ import {
   Plus,
   Camera,
   Layers,
+  Bot,
+  Sparkles,
+  GripVertical,
+  LogOut,
 } from 'lucide-react';
 
 const DormApp: React.FC = () => {
-  const { currentUser } = useDorm();
+  const { currentUser, checkedOutWorkers } = useDorm();
 
-  // View Mode: 'desktop' vs 'mobile'
+  // View Mode: Auto-detect mobile (< 768px) vs Desktop PC (>= 768px)
   const [viewMode, setViewMode] = useState<'desktop' | 'mobile'>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -55,8 +63,10 @@ const DormApp: React.FC = () => {
       if (urlView === 'mobile' || urlView === 'phone') return 'mobile';
       if (urlView === 'desktop' || urlView === 'pc') return 'desktop';
       const saved = localStorage.getItem('dorm_view_mode');
-      if (saved === 'mobile' || saved === 'desktop') return saved;
-      if (window.innerWidth < 768) return 'mobile';
+      if (saved === 'desktop') return 'desktop';
+      if (saved === 'mobile') return 'mobile';
+      // Auto-detect based on screen width
+      return window.innerWidth < 768 ? 'mobile' : 'desktop';
     }
     return 'desktop';
   });
@@ -67,6 +77,22 @@ const DormApp: React.FC = () => {
       localStorage.setItem('dorm_view_mode', mode);
     }
   };
+
+  // Auto switch when resizing between desktop and mobile if user hasn't explicitly locked preference in URL
+  useEffect(() => {
+    const handleResize = () => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('view')) return; // URL parameter overrides auto-resize
+      
+      const saved = localStorage.getItem('dorm_view_mode');
+      if (!saved) {
+        setViewMode(window.innerWidth < 768 ? 'mobile' : 'desktop');
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Navigation State
   const [selectedDorm, setSelectedDorm] = useState<number | null>(null);
@@ -115,22 +141,175 @@ const DormApp: React.FC = () => {
   const [isEditManagerOpen, setIsEditManagerOpen] = useState(false);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isManagerLinksOpen, setIsManagerLinksOpen] = useState(false);
+  const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
+  const [isCheckedOutModalOpen, setIsCheckedOutModalOpen] = useState(false);
+
+  // Floating AI Assistant draggable button position state (persisted in localStorage)
+  const [aiBtnPosition, setAiBtnPosition] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const saved = localStorage.getItem('dorm_ai_btn_position');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
+  const [isDraggingAiBtn, setIsDraggingAiBtn] = useState(false);
+  const aiBtnDragStartRef = useRef<{ startX: number; startY: number; initialX: number; initialY: number }>({
+    startX: 0,
+    startY: 0,
+    initialX: 0,
+    initialY: 0,
+  });
+  const aiBtnMovedRef = useRef(false);
+  const aiBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Clamp button within viewport boundaries on screen resize
+  useEffect(() => {
+    const handleResize = () => {
+      setAiBtnPosition((prev) => {
+        if (!prev) return null;
+        const btnWidth = aiBtnRef.current?.offsetWidth || 140;
+        const btnHeight = aiBtnRef.current?.offsetHeight || 48;
+        const maxX = Math.max(8, window.innerWidth - btnWidth - 8);
+        const maxY = Math.max(8, window.innerHeight - btnHeight - 8);
+        return {
+          x: Math.max(8, Math.min(maxX, prev.x)),
+          y: Math.max(8, Math.min(maxY, prev.y)),
+        };
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleAiBtnPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return;
+    const btn = aiBtnRef.current;
+    if (!btn) return;
+
+    const rect = btn.getBoundingClientRect();
+    aiBtnDragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initialX: rect.left,
+      initialY: rect.top,
+    };
+    aiBtnMovedRef.current = false;
+    btn.setPointerCapture(e.pointerId);
+  };
+
+  const handleAiBtnPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!aiBtnRef.current?.hasPointerCapture(e.pointerId)) return;
+
+    const deltaX = e.clientX - aiBtnDragStartRef.current.startX;
+    const deltaY = e.clientY - aiBtnDragStartRef.current.startY;
+
+    if (!aiBtnMovedRef.current && Math.hypot(deltaX, deltaY) > 5) {
+      aiBtnMovedRef.current = true;
+      setIsDraggingAiBtn(true);
+    }
+
+    if (aiBtnMovedRef.current) {
+      const btnWidth = aiBtnRef.current?.offsetWidth || 140;
+      const btnHeight = aiBtnRef.current?.offsetHeight || 48;
+      const maxX = Math.max(8, window.innerWidth - btnWidth - 8);
+      const maxY = Math.max(8, window.innerHeight - btnHeight - 8);
+
+      const nextX = Math.max(8, Math.min(maxX, aiBtnDragStartRef.current.initialX + deltaX));
+      const nextY = Math.max(8, Math.min(maxY, aiBtnDragStartRef.current.initialY + deltaY));
+
+      setAiBtnPosition({ x: nextX, y: nextY });
+    }
+  };
+
+  const handleAiBtnPointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (aiBtnRef.current?.hasPointerCapture(e.pointerId)) {
+      aiBtnRef.current.releasePointerCapture(e.pointerId);
+    }
+
+    if (aiBtnMovedRef.current) {
+      // Finished dragging: persist new location and prevent click opening
+      setAiBtnPosition((currentPos) => {
+        if (currentPos) {
+          try {
+            localStorage.setItem('dorm_ai_btn_position', JSON.stringify(currentPos));
+          } catch {
+            // ignore
+          }
+        }
+        return currentPos;
+      });
+      setTimeout(() => {
+        aiBtnMovedRef.current = false;
+        setIsDraggingAiBtn(false);
+      }, 50);
+    } else {
+      // Tap / Click: open AI Assistant modal
+      aiBtnMovedRef.current = false;
+      setIsDraggingAiBtn(false);
+      setIsAiAssistantOpen(true);
+    }
+  };
 
   // Deep linking and quick action handling on load
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const action = params.get('action')?.toLowerCase();
+      
       if (action === 'scan' || action === 'cccd') {
         setIsCccdScanOpen(true);
+      } else if (action === 'ai' || action === 'assistant' || action === 'tro-ly-ai' || action === 'chat') {
+        setIsAiAssistantOpen(true);
       } else if (action === 'leaders' || action === 'totruong') {
         setIsTeamLeadersOpen(true);
-      } else if (action === 'active-rooms' || action === 'phong') {
+      } else if (action === 'active-rooms' || action === 'phong' || action === 'phong-dang-o') {
         setIsActiveRoomsOpen(true);
       } else if (action === 'search' || action === 'timkiem') {
         setIsSearchOpen(true);
-      } else if (action === 'manager-links' || action === 'links' || action === 'portal') {
+      } else if (action === 'gallery' || action === 'anhcccd') {
+        setIsCccdGalleryOpen(true);
+      } else if (action === 'duplicate' || action === 'trungma') {
+        setIsDuplicateCheckerOpen(true);
+      } else if (action === 'delete' || action === 'xoamanv') {
+        setIsDeleteByEmpCodeOpen(true);
+      } else if (action === 'add' || action === 'them') {
+        setWorkerToEdit(null);
+        setIsAddWorkerOpen(true);
+      } else if (action === 'manager-links' || action === 'links' || action === 'share' || action === 'portal-links') {
         setIsManagerLinksOpen(true);
+      } else if (action === 'import') {
+        setIsExcelImportOpen(true);
+      } else if (action === 'export') {
+        setIsExcelExportOpen(true);
+      } else if (action === 'settings' || action === 'caidat') {
+        setSettingsTab('scale');
+        setIsSettingsOpen(true);
+      }
+
+      const viewParam = params.get('view')?.toLowerCase();
+      if (viewParam === 'mobile' || viewParam === 'phone') {
+        setViewMode('mobile');
+        localStorage.setItem('dorm_view_mode', 'mobile');
+      } else if (viewParam === 'desktop' || viewParam === 'pc') {
+        setViewMode('desktop');
+        localStorage.setItem('dorm_view_mode', 'desktop');
+      }
+
+      const portalParam = (params.get('portal') || params.get('role') || params.get('login'))?.toLowerCase();
+      const userNameParam = params.get('name');
+      if (portalParam === 'manager' || portalParam === 'quanly') {
+        addToast('success', userNameParam ? `Đã truy cập Cổng Quản lý KTX: ${decodeURIComponent(userNameParam)}!` : 'Đã truy cập Cổng Quản lý KTX (Toàn quyền điều hành)!');
+      } else if (portalParam === 'admin' || portalParam === 'quantri') {
+        addToast('success', 'Đã truy cập Cổng Quản trị Super Admin (Khổng Minh Liên)!');
+      } else if (portalParam === 'viewer' || portalParam === 'xem') {
+        addToast('info', 'Đã truy cập Cổng Nhân viên Tra cứu (Chỉ xem)!');
       }
 
       const dormParam = params.get('dorm');
@@ -195,14 +374,18 @@ const DormApp: React.FC = () => {
       cccd: extracted.cccd || '',
       dob: extracted.dob || '',
       address: extracted.address || '',
-      empCode: '',
-      phone: '',
-      dorm: selectedDorm || 1,
-      room: selectedRoom || 1,
-      bed: 1,
+      empCode: extracted.empCode || '',
+      phone: extracted.phone || '',
+      dorm: extracted.dorm || selectedDorm || 1,
+      room: extracted.room || selectedRoom || 1,
+      bed: extracted.bed || 1,
+      teamLeader: extracted.teamLeader || '',
       status: 'Đang ở',
-      entryDate: new Date().toISOString().split('T')[0],
+      entryDate: getTodayStr(),
       exitDate: '',
+      gender: extracted.gender || 'Nam',
+      issueDate: extracted.issueDate || '',
+      issuePlace: extracted.issuePlace || '',
       cccdFrontImage: extracted.frontImage,
       cccdBackImage: extracted.backImage,
       createdAt: new Date().toISOString(),
@@ -235,8 +418,17 @@ const DormApp: React.FC = () => {
           onOpenSearchModal={() => setIsSearchOpen(true)}
           onOpenCccdGallery={() => setIsCccdGalleryOpen(true)}
           onOpenDeleteByEmpCodeModal={() => setIsDeleteByEmpCodeOpen(true)}
+          onOpenCheckedOutWorkersModal={() => setIsCheckedOutModalOpen(true)}
           onOpenTeamLeadersModal={() => setIsTeamLeadersOpen(true)}
           onOpenActiveRoomsModal={() => setIsActiveRoomsOpen(true)}
+          onOpenImportModal={() => setIsExcelImportOpen(true)}
+          onOpenExportModal={() => setIsExcelExportOpen(true)}
+          onOpenBackupModal={() => {
+            setSettingsTab('backup');
+            setIsSettingsOpen(true);
+          }}
+          onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
+          onOpenUserManagement={() => setIsUserManagementOpen(true)}
           onEditWorker={(worker) => {
             setWorkerToEdit(worker);
             setIsAddWorkerOpen(true);
@@ -248,9 +440,16 @@ const DormApp: React.FC = () => {
             setWorkerToViewCccd(worker);
             setIsCccdGalleryOpen(true);
           }}
+          onOpenManagerLinks={() => setIsManagerLinksOpen(true)}
+          onOpenAiAssistant={() => setIsAiAssistantOpen(true)}
           onSwitchToDesktop={() => handleToggleViewMode('desktop')}
           selectedDormFilter={selectedDorm}
-          onSelectDormFilter={(dorm) => setSelectedDorm(dorm)}
+          onSelectDormFilter={(dorm) => {
+            setSelectedDorm(dorm);
+            setSelectedRoom(null);
+          }}
+          selectedRoomFilter={selectedRoom}
+          onSelectRoomFilter={(room) => setSelectedRoom(room)}
         />
       ) : (
         <>
@@ -277,17 +476,19 @@ const DormApp: React.FC = () => {
             onOpenUserManagement={() => setIsUserManagementOpen(true)}
             onOpenLogin={() => setIsLoginOpen(true)}
             onOpenManagerLinks={() => setIsManagerLinksOpen(true)}
+            onOpenAiAssistant={() => setIsAiAssistantOpen(true)}
             onSwitchToMobile={() => handleToggleViewMode('mobile')}
           />
 
           {/* Main Content Area */}
-          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+          <main className="flex-1 max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1680px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
             
             {/* Top Metric Cards */}
             <DashboardCards
               onFilterActive={handleFilterActive}
               onFilterTodayEntered={handleFilterTodayEntered}
               onFilterTodayExited={handleFilterTodayExited}
+              onOpenCheckedOutWorkers={() => setIsCheckedOutModalOpen(true)}
               onOpenTeamLeaders={() => setIsTeamLeadersOpen(true)}
               onOpenActiveRooms={() => setIsActiveRoomsOpen(true)}
             />
@@ -357,6 +558,15 @@ const DormApp: React.FC = () => {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCheckedOutModalOpen(true)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 transition-colors border border-rose-200 dark:border-rose-800 font-medium"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Đã check out ({checkedOutWorkers?.length || 0})</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setIsTeamLeadersOpen(true)}
@@ -481,8 +691,11 @@ const DormApp: React.FC = () => {
       <CccdScanModal
         isOpen={isCccdScanOpen}
         onClose={() => setIsCccdScanOpen(false)}
+        defaultDorm={selectedDorm || 1}
+        defaultRoom={selectedRoom || 1}
         onScanCompleted={handleOcrCompleted}
         onErrorToast={(msg) => addToast('error', msg)}
+        onSuccessToast={(msg) => addToast('success', msg)}
       />
 
       <CccdGalleryModal
@@ -562,6 +775,83 @@ const DormApp: React.FC = () => {
         onClose={() => setIsManagerLinksOpen(false)}
         onSuccessToast={(msg) => addToast('success', msg)}
       />
+
+      {/* Checked Out Workers Modal */}
+      <CheckedOutWorkersModal
+        isOpen={isCheckedOutModalOpen}
+        onClose={() => setIsCheckedOutModalOpen(false)}
+        onSuccessToast={(msg) => addToast('success', msg)}
+        onErrorToast={(msg) => addToast('error', msg)}
+      />
+
+      {/* AI Assistant Modal */}
+      <AiAssistantModal
+        isOpen={isAiAssistantOpen}
+        onClose={() => setIsAiAssistantOpen(false)}
+        onSelectRooms={(roomNumbers) => {
+          if (roomNumbers && roomNumbers.length > 0) {
+            const first = roomNumbers[0];
+            const dorm = Math.floor(first / 100);
+            const room = first % 100;
+            setSelectedDorm(dorm);
+            setSelectedRoom(room);
+            addToast('info', `Trợ lý AI đã điều hướng tới Dãy ${dorm} - Phòng ${String(room).padStart(2, '0')}`);
+          }
+        }}
+        onSelectDormRoom={(dorm, room) => {
+          setSelectedDorm(dorm);
+          setSelectedRoom(room);
+        }}
+        onOpenModal={(modalName) => {
+          if (modalName === 'cccd_scan') {
+            setIsCccdScanOpen(true);
+          } else if (modalName === 'duplicate_checker') {
+            setIsDuplicateCheckerOpen(true);
+          } else if (modalName === 'active_rooms') {
+            setIsActiveRoomsOpen(true);
+          } else if (modalName === 'team_leaders') {
+            setIsTeamLeadersOpen(true);
+          } else if (modalName === 'export_excel') {
+            setIsExcelExportOpen(true);
+          }
+        }}
+        onFilterWorkerEmpCodes={(empCodes) => {
+          setIsSearchOpen(true);
+          addToast('info', `Trợ lý AI: Tìm thấy ${empCodes.length} hồ sơ liên quan.`);
+        }}
+      />
+
+      {/* Floating AI Assistant Trigger Button (Draggable & Movable across all views) */}
+      {!isAiAssistantOpen && (
+        <button
+          ref={aiBtnRef}
+          type="button"
+          id="btn-floating-ai-assistant"
+          onPointerDown={handleAiBtnPointerDown}
+          onPointerMove={handleAiBtnPointerMove}
+          onPointerUp={handleAiBtnPointerUp}
+          onPointerCancel={handleAiBtnPointerUp}
+          style={{
+            left: aiBtnPosition ? `${aiBtnPosition.x}px` : undefined,
+            top: aiBtnPosition ? `${aiBtnPosition.y}px` : undefined,
+            touchAction: 'none',
+          }}
+          className={`fixed z-40 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 bg-gradient-to-r from-teal-600 via-cyan-600 to-teal-700 hover:from-teal-500 hover:to-cyan-500 text-white rounded-full shadow-xl border-2 border-white/40 backdrop-blur-xs select-none transition-shadow ${
+            isDraggingAiBtn
+              ? 'cursor-grabbing scale-105 shadow-2xl ring-4 ring-teal-400/50 opacity-95'
+              : 'cursor-grab hover:shadow-2xl hover:scale-105 active:scale-95'
+          } ${!aiBtnPosition ? 'bottom-5 right-5 sm:bottom-6 sm:right-6' : ''}`}
+          title="Nhấp để trò chuyện với Trợ lý AI Lee, hoặc kéo thả để di chuyển vị trí"
+        >
+          <GripVertical className="w-3.5 h-3.5 text-white/70 -ml-1 shrink-0" />
+          <div className="relative shrink-0">
+            <LeeMascot variant="badge" size={32} className="-my-1 drop-shadow-sm" animated={true} />
+            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-white" />
+          </div>
+          <span className="text-xs sm:text-sm font-extrabold tracking-wide">Trợ lý AI Lee</span>
+          <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 group-hover:rotate-12 transition-transform" />
+        </button>
+      )}
 
     </div>
   );

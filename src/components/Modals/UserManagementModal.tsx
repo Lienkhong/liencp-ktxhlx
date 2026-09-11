@@ -41,15 +41,19 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
   if (!isOpen) return null;
 
-  const baseUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}${window.location.pathname}`
+  const customDomain = typeof window !== 'undefined' ? localStorage.getItem('dorm_custom_share_domain') : null;
+  const isDev = typeof window !== 'undefined' && window.location.origin.includes('ais-dev-');
+  const baseUrl = customDomain
+    ? customDomain.trim().replace(/\/+$/, '')
+    : typeof window !== 'undefined'
+    ? `${isDev ? window.location.origin.replace('ais-dev-', 'ais-pre-') : window.location.origin}${window.location.pathname}`.replace(/\/+$/, '')
     : '';
 
   const copyUserLink = (role: UserRole, id: string, name: string) => {
-    const link = `${baseUrl}?portal=${role}`;
+    const link = `${baseUrl}?portal=${role}&user=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`;
     navigator.clipboard.writeText(link).then(() => {
       setCopiedId(id);
-      onSuccessToast(`Đã sao chép đường dẫn truy cập cho ${name}!`);
+      onSuccessToast(`Đã sao chép đường dẫn truy cập cho ${name}! (Lưu ý: Bấm nút Share trên AI Studio nếu gửi cho thiết bị khác)`);
       setTimeout(() => setCopiedId(null), 2500);
     });
   };

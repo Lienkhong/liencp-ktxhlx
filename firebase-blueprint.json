@@ -12,7 +12,7 @@
         "room": { "type": "number" },
         "bed": { "type": "number" },
         "teamLeader": { "type": "string" },
-        "status": { "type": "string", "enum": ["Đang ở", "Đã rời KTX"] },
+        "status": { "type": "string", "enum": ["Đang ở", "Đã check out", "Đã rời KTX"] },
         "empCode": { "type": "string" },
         "cccd": { "type": "string" },
         "address": { "type": "string" },
@@ -109,6 +109,25 @@
         "empCode": { "type": "string" }
       },
       "required": ["id", "timestamp", "userName", "action", "details"]
+    },
+    "CheckedOutWorker": {
+      "title": "CheckedOutWorker",
+      "description": "Kho lưu trữ hồ sơ công nhân đã check out hoặc xóa khỏi phòng KTX",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workerId": { "type": "string" },
+        "name": { "type": "string" },
+        "empCode": { "type": "string" },
+        "dorm": { "type": "number" },
+        "room": { "type": "number" },
+        "bed": { "type": "number" },
+        "teamLeader": { "type": "string" },
+        "status": { "type": "string" },
+        "checkedOutAt": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "required": ["id", "name", "empCode", "checkedOutAt"]
     }
   },
   "firestore": {
@@ -135,6 +154,10 @@
     "/activity_logs/{logId}": {
       "schema": "ActivityLog",
       "description": "Nhật ký kiểm tra và lịch sử hoạt động hệ thống"
+    },
+    "/checked_out_workers/{recordId}": {
+      "schema": "CheckedOutWorker",
+      "description": "Kho lưu trữ hồ sơ công nhân đã xóa và check out khỏi phòng"
     }
   }
 }
